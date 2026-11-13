@@ -5,12 +5,25 @@ import pandas as pd
 class VeyroBacktester:
 
     def __init__(self, initial_capital=10000, transaction_cost=0.001):
+        if initial_capital <= 0:
+            raise ValueError("Initial capital must be greater than zero.")
+        if not 0 <= transaction_cost < 1:
+            raise ValueError("Transaction cost must be between 0 and 1.")
         self.initial_capital = initial_capital
         self.transaction_cost = transaction_cost
 
     def moving_average_strategy(self, data, fast=20, slow=50):
 
+        if fast < 1 or slow <= fast:
+            raise ValueError("Moving-average windows must satisfy 1 <= fast < slow.")
+        if "Close" not in data or data["Close"].dropna().empty:
+            raise ValueError("Historical data must contain closing prices.")
+
         df = data.copy()
+        df["Close"] = pd.to_numeric(df["Close"], errors="coerce")
+        df = df.dropna(subset=["Close"])
+        if df.empty:
+            raise ValueError("Historical data contains no usable closing prices.")
 
         df["Fast_MA"] = df["Close"].rolling(fast).mean()
         df["Slow_MA"] = df["Close"].rolling(slow).mean()
@@ -43,9 +56,12 @@ class VeyroBacktester:
             (1 + df["Market_Return"]).cumprod()
         )
 
-        return df.dropna(subset=["Fast_MA", "Slow_MA"])
+        return df
 
     def calculate_metrics(self, results):
+
+        if results.empty or "Strategy_Return" not in results:
+            raise ValueError("Backtest results are empty or incomplete.")
 
         returns = results["Strategy_Return"]
         equity = results["Strategy_Equity"]
@@ -59,7 +75,7 @@ class VeyroBacktester:
         annualized_return = (
             (equity.iloc[-1] / self.initial_capital)
             ** (1 / years) - 1
-        ) * 100 if years > 0 else 0
+        ) * 100 if years > 0 and equity.iloc[-1] > 0 else np.nan
 
         volatility = returns.std() * np.sqrt(252) * 100
 

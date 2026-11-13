@@ -1,10 +1,12 @@
 
-from html import escape
 import json
+import os
 import xml.etree.ElementTree as ET
 from datetime import datetime
+from html import escape
 from pathlib import Path
 from urllib.parse import quote
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
@@ -15,6 +17,8 @@ import streamlit as st
 import streamlit.components.v1 as components
 import yfinance as yf
 
+from modules.backtesting import VeyroBacktester
+
 # -----------------------------------------
 # NOVA — MARKET INTELLIGENCE
 # -----------------------------------------
@@ -23,7 +27,7 @@ st.set_page_config(
     page_title="Nova | Market Intelligence",
     page_icon="✦",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 voice_component = components.declare_component(
@@ -40,6 +44,12 @@ st.markdown("""
     --nova-muted: #75aeb8;
     --nova-line: rgba(8, 245, 239, .27);
     --nova-panel: rgba(3, 18, 27, .88);
+}
+[data-testid="stButton"] button[kind="primary"] {
+    color: #021014;
+    background: linear-gradient(110deg, #08f5ef, #67d9e3);
+    border-color: #a4ffff;
+    box-shadow: 0 0 18px rgba(8, 245, 239, .22);
 }
 .stApp {
     position: relative;
@@ -82,9 +92,9 @@ st.markdown("""
     );
     animation: nova-scan 12s linear infinite;
 }
-[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #04141d, #02090e 78%);
-    border-right: 1px solid var(--nova-line);
+[data-testid="stSidebar"], [data-testid="collapsedControl"],
+[data-testid="stSidebarCollapsedControl"] {
+    display: none !important;
 }
 h1, h2, h3, h4 {
     color: #d8fdff !important;
@@ -280,6 +290,101 @@ hr {
     color: var(--nova-cyan);
     font-weight: 600;
 }
+.nova-headline-rail {
+    overflow: hidden;
+    margin: 12px 0;
+    border: 1px solid var(--nova-line);
+    background: rgba(3, 18, 27, .88);
+    color: #d8fdff;
+    white-space: nowrap;
+}
+.nova-headline-track {
+    display: flex;
+    width: max-content;
+    animation: nova-marquee 54s linear infinite;
+}
+.nova-headline-track span {
+    display: inline-block;
+    padding: 10px 24px;
+    color: var(--nova-cyan);
+    font-size: .72rem;
+    letter-spacing: .08em;
+}
+.nova-headline-track:hover {
+    animation-play-state: paused;
+}
+.nova-headline-card {
+    display: block;
+    margin: 8px 0;
+    padding: 10px 12px;
+    border-left: 2px solid var(--nova-cyan);
+    background: rgba(4, 25, 34, .7);
+    color: #d8fdff !important;
+    font-size: .75rem;
+    line-height: 1.6;
+    text-decoration: none !important;
+}
+.nova-headline-card:hover {
+    background: rgba(8, 70, 79, .55);
+    box-shadow: 0 0 14px rgba(8, 245, 239, .10);
+}
+.nova-headline-meta {
+    display: block;
+    margin-top: 4px;
+    color: var(--nova-muted);
+    font-size: .62rem;
+    letter-spacing: .07em;
+}
+.nova-spectrum {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    height: 34px;
+    padding: 0 10px;
+    border-left: 1px solid var(--nova-line);
+}
+.nova-spectrum span {
+    width: 3px;
+    height: 5px;
+    background: var(--nova-cyan);
+    box-shadow: 0 0 8px rgba(8, 245, 239, .45);
+    animation: nova-spectrum 1.1s ease-in-out infinite;
+}
+.nova-spectrum span:nth-child(3n) { animation-delay: -.35s; }
+.nova-spectrum span:nth-child(2n) { animation-delay: -.7s; }
+.nova-command-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    margin: 0 0 10px;
+    padding: 10px 14px;
+    border: 1px solid var(--nova-line);
+    background: linear-gradient(110deg, rgba(4, 33, 43, .95), rgba(3, 15, 23, .95));
+}
+.nova-command-brand {
+    color: #d8fdff;
+    font: 700 1.05rem 'Rajdhani', sans-serif;
+    letter-spacing: .16em;
+}
+.nova-command-brand span {
+    color: var(--nova-cyan);
+}
+.nova-nav-label {
+    margin: 5px 0 7px;
+    color: var(--nova-muted);
+    font-size: .62rem;
+    letter-spacing: .15em;
+}
+.nova-school-note {
+    border: 1px solid var(--nova-line);
+    border-left: 3px solid var(--nova-cyan);
+    padding: 12px 14px;
+    background: rgba(4, 25, 34, .72);
+    color: #b6e5e9;
+    font-size: .78rem;
+    line-height: 1.7;
+}
 .nova-console-panel {
     min-height: 250px;
     padding: 16px;
@@ -353,11 +458,19 @@ hr {
 @keyframes nova-pulse {
     50% { box-shadow: 0 0 30px rgba(8,245,239,.58), inset 0 0 22px rgba(8,245,239,.28); }
 }
+@keyframes nova-marquee {
+    to { transform: translateX(-50%); }
+}
+@keyframes nova-spectrum {
+    0%, 100% { height: 5px; opacity: .48; }
+    50% { height: 28px; opacity: 1; }
+}
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
         animation-duration: .01ms !important;
         animation-iteration-count: 1 !important;
     }
+    .nova-headline-rail { overflow-x: auto; }
 }
 .nova-small {
     color: var(--nova-muted);
@@ -741,21 +854,25 @@ def render_news_feed(title, feed_url):
             stories = get_news(feed_url)
     except (OSError, TimeoutError, ValueError, ET.ParseError) as error:
         st.warning(f"{title} is temporarily unavailable ({error}).")
-        return
+        return []
 
     if not stories:
         st.info("No headlines are available from this feed right now.")
-        return
+        return []
 
-    st.dataframe(
-        pd.DataFrame(stories),
-        use_container_width=True,
-        hide_index=True,
-        height=min(360, 42 + len(stories) * 38),
-        column_config={
-            "Link": st.column_config.LinkColumn("Article", display_text="Open")
-        }
-    )
+    for story in stories:
+        title_text = escape(story["Headline"])
+        publisher = escape(story["Publisher"])
+        published = escape(story["Published"])
+        link = escape(story["Link"], quote=True)
+        st.markdown(
+            f'<a class="nova-headline-card" href="{link}" target="_blank" '
+            f'rel="noopener noreferrer">{title_text}'
+            f'<span class="nova-headline-meta">{publisher} &nbsp; / &nbsp; '
+            f'{published}</span></a>',
+            unsafe_allow_html=True
+        )
+    return stories
 
 
 def render_market_news():
@@ -771,9 +888,80 @@ def render_market_news():
     )
     market_col, local_col = st.columns(2)
     with market_col:
-        render_news_feed("MARKET & STOCK NEWS", market_feed)
+        market_stories = render_news_feed("MARKET & STOCK NEWS", market_feed)
     with local_col:
-        render_news_feed("NAPERVILLE / CHICAGO AREA", local_feed)
+        local_stories = render_news_feed("NAPERVILLE / CHICAGO AREA", local_feed)
+
+    stories = market_stories + local_stories
+    if stories:
+        ticker_text = "   ✦   ".join(
+            escape(story["Headline"]) for story in stories
+        ) + "   ✦   "
+        st.markdown(
+            '<div class="nova-headline-rail"><div class="nova-headline-track">'
+            f'<span>{ticker_text}</span><span aria-hidden="true">{ticker_text}</span>'
+            '</div></div>',
+            unsafe_allow_html=True
+        )
+    return stories
+
+
+def get_study_ai_settings():
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini").strip()
+    try:
+        secrets = st.secrets
+        api_key = api_key or str(secrets.get("OPENAI_API_KEY", "")).strip()
+        model = str(secrets.get("OPENAI_MODEL", model)).strip() or model
+    except FileNotFoundError:
+        pass
+    return api_key, model
+
+
+def request_study_tutor(messages, subject, help_mode, model, api_key):
+    tutor_guidance = (
+        "You are NOVA Study Studio, a supportive tutor. Help the student learn "
+        "through clear explanations, hints, worked examples on analogous "
+        "problems, outlines, feedback, and practice questions. Do not write a "
+        "complete graded submission for the student or provide answers to an "
+        "active exam. Ask a focused follow-up when the request lacks context. "
+        "Be transparent about uncertainty and distinguish facts from guesses."
+    )
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    f"{tutor_guidance}\nSubject: {subject}. "
+                    f"Requested help mode: {help_mode}."
+                )
+            },
+            *messages
+        ],
+        "temperature": 0.4
+    }
+    request = Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        },
+        method="POST"
+    )
+    with urlopen(request, timeout=45) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    try:
+        answer = result["choices"][0]["message"]["content"]
+    except (IndexError, KeyError, TypeError) as error:
+        raise ValueError("The study assistant returned an invalid response.") from error
+    if not isinstance(answer, str):
+        raise ValueError("The study assistant returned a non-text response.")
+    answer = answer.strip()
+    if not answer:
+        raise ValueError("The study assistant returned an empty response.")
+    return answer
 
 
 @st.fragment(run_every="60s")
@@ -792,10 +980,22 @@ def render_naperville_context():
             '<div class="nova-small">LIVE CONDITIONS // NAPERVILLE, ILLINOIS</div>',
             unsafe_allow_html=True
         )
-        if st.button("LOAD LOCAL WEATHER", key="load_naperville_weather"):
+        weather = st.session_state.get("naperville_weather")
+        button_label = "REFRESH LOCAL WEATHER" if weather else "LOAD LOCAL WEATHER"
+        if st.button(button_label, key="load_naperville_weather"):
             try:
+                get_naperville_weather.clear()
                 with st.spinner("CONNECTING TO WEATHER FEED..."):
                     weather = get_naperville_weather()
+                st.session_state.naperville_weather = weather
+            except (OSError, TimeoutError, ValueError, KeyError) as error:
+                st.warning(
+                    f"Naperville weather is temporarily unavailable ({error}). "
+                    "The local clock remains active."
+                )
+        weather = st.session_state.get("naperville_weather")
+        if weather:
+            try:
                 current = weather["current"]
                 st.markdown(
                     f'<span class="nova-weather-temp">{current["temperature_2m"]:.0f}°F</span>'
@@ -831,9 +1031,9 @@ def render_naperville_context():
                     f'<div class="nova-small">5-DAY OUTLOOK &nbsp; {forecast_text}</div>',
                     unsafe_allow_html=True
                 )
-            except (OSError, TimeoutError, ValueError, KeyError) as error:
+            except (ValueError, KeyError) as error:
                 st.warning(
-                    f"Naperville weather is temporarily unavailable ({error}). "
+                    f"Naperville weather response was incomplete ({error}). "
                     "The local clock remains active."
                 )
         else:
@@ -861,16 +1061,52 @@ if "radar" not in st.session_state:
 
 if "asset_command" not in st.session_state:
     st.session_state.asset_command = ""
+if "study_prompt" not in st.session_state:
+    st.session_state.study_prompt = ""
+if "study_messages" not in st.session_state:
+    st.session_state.study_messages = []
+if "show_market_news" not in st.session_state:
+    st.session_state.show_market_news = False
+if "active_page" not in st.session_state:
+    st.session_state.active_page = "Command Center"
 
-with st.sidebar:
-    st.markdown("## ✦ NOVA")
-    st.caption("MARKET INTELLIGENCE SYSTEM")
-    st.markdown("**VOICE CONTROL**")
+pages = [
+    ("Command Center", "01 / COMMAND"),
+    ("Stock Intelligence", "02 / STOCKS"),
+    ("Market Screener", "03 / SCREENER"),
+    ("Backtesting Lab", "04 / BACKTEST"),
+    ("Galaxy Radar", "05 / RADAR"),
+    ("Portfolio Analytics", "06 / PORTFOLIO"),
+    ("Study Studio", "07 / STUDY"),
+    ("System Information", "08 / SYSTEM")
+]
+if st.session_state.active_page not in {page_name for page_name, _ in pages}:
+    st.session_state.active_page = "Command Center"
+
+st.markdown(
+    '<div class="nova-command-header">'
+    '<div class="nova-command-brand"><span>✦</span> NOVA '
+    '<span>//</span> COMMAND DECK</div>'
+    '<div class="nova-spectrum" aria-label="Animated system activity">'
+    + "".join("<span></span>" for _ in range(13))
+    + '</div></div>',
+    unsafe_allow_html=True
+)
+
+voice_col, voice_status_col = st.columns([1.1, 2])
+with voice_col:
     voice_result = voice_component(
         key="nova_voice_control",
-        default={"status": "idle", "transcript": ""}
+        default={"status": "idle", "transcript": ""},
+        response_text=st.session_state.get("last_study_response", "")
     )
-    st.caption("Tap the mic to speak a ticker or navigate by page name.")
+with voice_status_col:
+    st.markdown(
+        '<div class="nova-small">VOICE LINK / CLICK MIC TO SPEAK</div>'
+        '<div class="nova-console-note">Say a page name to navigate, or ask '
+        'a question while in Study Studio. Browser microphone permission is required.</div>',
+        unsafe_allow_html=True
+    )
 if not isinstance(voice_result, dict):
     voice_result = {"status": "idle", "transcript": ""}
 transcript = voice_result.get("transcript", "")
@@ -887,12 +1123,18 @@ if transcript and transcript != st.session_state.get("last_voice_transcript"):
         "stock analysis": "Stock Intelligence",
         "market screener": "Market Screener",
         "screener": "Market Screener",
+        "backtesting": "Backtesting Lab",
+        "backtesting lab": "Backtesting Lab",
+        "strategy research": "Backtesting Lab",
+        "strategy lab": "Backtesting Lab",
         "galaxy radar": "Galaxy Radar",
         "radar": "Galaxy Radar",
         "portfolio": "Portfolio Analytics",
         "portfolio analytics": "Portfolio Analytics",
-        "strategy research": "Strategy Research",
-        "strategy lab": "Strategy Research",
+        "study": "Study Studio",
+        "study studio": "Study Studio",
+        "study assistant": "Study Studio",
+        "tutor": "Study Studio",
         "system information": "System Information"
     }
     destination = next(
@@ -912,43 +1154,42 @@ if transcript and transcript != st.session_state.get("last_voice_transcript"):
     if destination:
         st.session_state.active_page = destination
         voice_notice = f"Voice command opened {destination}."
+    elif st.session_state.active_page == "Study Studio":
+        st.session_state.study_prompt = transcript
+        voice_notice = "Voice question captured for Study Studio."
     else:
         st.session_state.active_page = "Command Center"
         st.session_state.asset_command = transcript
         voice_notice = f"Voice input captured: “{transcript}”"
 
 # -----------------------------------------
-# SIDEBAR NAVIGATION
+# CONTROL-DECK NAVIGATION
 # -----------------------------------------
 
 if voice_result.get("status") == "error":
-    st.sidebar.warning(
+    st.warning(
         "Voice recognition could not start. Check microphone permission and "
         f"browser support. ({voice_result.get('message', 'unknown error')})"
     )
 elif voice_notice:
-    st.sidebar.caption(voice_notice)
-st.sidebar.divider()
+    st.caption(voice_notice)
 
-page = st.sidebar.radio(
-    "SYSTEMS",
-    [
-        "Command Center",
-        "Stock Intelligence",
-        "Market Screener",
-        "Galaxy Radar",
-        "Portfolio Analytics",
-        "Strategy Research",
-        "System Information"
-    ],
-    key="active_page"
-)
+st.markdown('<div class="nova-nav-label">NAVIGATION / SELECT A SYSTEM</div>', unsafe_allow_html=True)
+for row_start in range(0, len(pages), 4):
+    nav_columns = st.columns(4)
+    for column, (destination, label) in zip(
+        nav_columns, pages[row_start:row_start + 4]
+    ):
+        if column.button(
+            label,
+            key=f"nav_{destination.lower().replace(' ', '_')}",
+            type="primary" if st.session_state.active_page == destination else "secondary",
+            use_container_width=True
+        ):
+            st.session_state.active_page = destination
+            st.rerun()
 
-st.sidebar.divider()
-st.sidebar.caption("DATA CONNECTION")
-st.sidebar.success("Market data provider available")
-st.sidebar.caption("Historical data may be delayed.")
-st.sidebar.caption("Research simulation only.")
+page = st.session_state.active_page
 
 # -----------------------------------------
 # COMMAND CENTER
@@ -983,7 +1224,7 @@ if page == "Command Center":
 
     col1, col2, col3, col4 = st.columns(4)
 
-    col1.metric("Research Modules", "7")
+    col1.metric("Research Modules", str(len(pages)))
     col2.metric("Portfolio Assets", len(st.session_state.portfolio))
     col3.metric("Radar Assets", len(st.session_state.radar))
     col4.metric("System Mode", "Research")
@@ -1035,7 +1276,7 @@ if page == "Command Center":
 
     st.subheader("Voice / Asset Discovery")
     st.caption(
-        "Use the voice control in the sidebar for ticker lookup or say a page "
+        "Use the command-deck microphone for ticker lookup or say a page "
         "name such as “market screener” to navigate. Microphone starts only "
         "after your click and requires browser permission."
     )
@@ -1078,14 +1319,22 @@ if page == "Command Center":
     st.dataframe(portfolio_table, use_container_width=True, hide_index=True)
     st.divider()
     st.subheader("Live Intelligence Feeds")
-    if st.button("LOAD LIVE NEWS", key="load_market_news"):
+    if st.button(
+        "REFRESH LIVE HEADLINES" if st.session_state.show_market_news
+        else "LOAD LIVE HEADLINES",
+        key="load_market_news"
+    ):
+        st.session_state.show_market_news = True
+        get_news.clear()
+    if st.session_state.show_market_news:
         render_market_news()
     else:
         st.caption("Live news feeds load when requested.")
     st.markdown(
         '<div class="nova-small">COMMAND DECK &nbsp; • &nbsp; '
         'STOCK INTELLIGENCE &nbsp; • &nbsp; MARKET SCREENER &nbsp; • &nbsp; '
-        'GALAXY RADAR &nbsp; • &nbsp; PORTFOLIO &nbsp; • &nbsp; STRATEGY LAB</div>',
+        'BACKTESTING &nbsp; • &nbsp; GALAXY RADAR &nbsp; • &nbsp; '
+        'PORTFOLIO &nbsp; • &nbsp; STUDY STUDIO</div>',
         unsafe_allow_html=True
     )
 
@@ -1567,59 +1816,222 @@ elif page == "Portfolio Analytics":
     )
 
 # -----------------------------------------
-# STRATEGY RESEARCH
+# BACKTESTING LAB
 # -----------------------------------------
 
-elif page == "Strategy Research":
+elif page == "Backtesting Lab":
 
-    st.markdown('<p class="nova-eyebrow">NOVA // STRATEGY SIMULATION</p>', unsafe_allow_html=True)
-    st.title("Strategy Research Lab")
-    st.caption("HISTORICAL MOVING AVERAGE SIMULATION")
+    st.markdown('<p class="nova-eyebrow">NOVA // HISTORICAL SIMULATION</p>', unsafe_allow_html=True)
+    st.title("Backtesting Lab")
+    st.caption("RULE-BASED RESEARCH / LONG OR CASH / NO LIVE ORDERS")
 
-    ticker = st.text_input("Research ticker", "NVDA")
+    with st.container(border=True):
+        controls = st.columns([1.2, 1, 1, 1, 1])
+        ticker = controls[0].text_input("Ticker", "NVDA", key="backtest_ticker").strip().upper()
+        period = controls[1].selectbox(
+            "History", ["1y", "2y", "5y", "10y"], index=2, key="backtest_period"
+        )
+        fast = controls[2].number_input(
+            "Fast average", min_value=2, max_value=200, value=20, key="backtest_fast"
+        )
+        slow = controls[3].number_input(
+            "Slow average", min_value=3, max_value=500, value=50, key="backtest_slow"
+        )
+        capital = controls[4].number_input(
+            "Starting capital ($)",
+            min_value=100.0,
+            value=10_000.0,
+            step=1_000.0,
+            key="backtest_capital"
+        )
+        cost_bps = st.number_input(
+            "Estimated cost per position change (basis points)",
+            min_value=0.0,
+            max_value=500.0,
+            value=10.0,
+            step=1.0,
+            key="backtest_cost_bps"
+        )
+        run_backtest = st.button(
+            "RUN BACKTEST", type="primary", key="run_backtest"
+        )
 
-    if st.button("RUN HISTORICAL SIMULATION"):
+    if run_backtest:
+        st.session_state.pop("backtest_result", None)
+        if not ticker:
+            st.error("Enter a ticker symbol to backtest.")
+        elif fast >= slow:
+            st.error("Fast average must be shorter than the slow average.")
+        else:
+            try:
+                with st.spinner(f"LOADING {ticker} HISTORICAL DATA..."):
+                    history = get_stock_data(ticker, period)
+                if history.empty or len(history) < slow:
+                    st.error(
+                        f"Not enough historical data to calculate a {slow}-day "
+                        f"average for {ticker}."
+                    )
+                else:
+                    engine = VeyroBacktester(
+                        initial_capital=capital,
+                        transaction_cost=cost_bps / 10_000
+                    )
+                    results = engine.moving_average_strategy(
+                        history, fast=int(fast), slow=int(slow)
+                    )
+                    metrics = engine.calculate_metrics(results)
+                    st.session_state.backtest_result = {
+                        "ticker": ticker,
+                        "period": period,
+                        "fast": int(fast),
+                        "slow": int(slow),
+                        "results": results,
+                        "metrics": metrics
+                    }
+            except (OSError, TimeoutError, ValueError, KeyError) as error:
+                st.error(f"Backtest could not run: {error}")
 
-        data = get_stock_data(ticker.strip().upper(), "5y")
+    backtest_result = st.session_state.get("backtest_result")
+    if backtest_result:
+        metrics = backtest_result["metrics"]
+        st.markdown(
+            f'<div class="nova-hud-strip">RESULTS / {escape(backtest_result["ticker"])}'
+            f' / SMA {backtest_result["fast"]}:{backtest_result["slow"]}'
+            f' / {escape(backtest_result["period"])}</div>',
+            unsafe_allow_html=True
+        )
+        metric_columns = st.columns(4)
+        metric_columns[0].metric("Strategy Return", f'{metrics["Total Return (%)"]:.2f}%')
+        metric_columns[1].metric("Buy & Hold", f'{metrics["Benchmark Return (%)"]:.2f}%')
+        metric_columns[2].metric("Max Drawdown", f'{metrics["Maximum Drawdown (%)"]:.2f}%')
+        metric_columns[3].metric("Ending Capital", f'${metrics["Ending Capital ($)"]:,.2f}')
+        more_metrics = st.columns(4)
+        more_metrics[0].metric("Annualized Return", f'{metrics["Annualized Return (%)"]:.2f}%')
+        more_metrics[1].metric("Sharpe Ratio", f'{metrics["Sharpe Ratio"]:.2f}')
+        more_metrics[2].metric("Annualized Volatility", f'{metrics["Annualized Volatility (%)"]:.2f}%')
+        more_metrics[3].metric("Position Changes", metrics["Position Changes"])
 
-        if not data.empty:
+        results = backtest_result["results"]
+        equity_chart = go.Figure()
+        equity_chart.add_trace(go.Scatter(
+            x=results.index,
+            y=results["Strategy_Equity"],
+            name="Strategy",
+            line=dict(color="#08f5ef", width=2)
+        ))
+        equity_chart.add_trace(go.Scatter(
+            x=results.index,
+            y=results["Benchmark_Equity"],
+            name="Buy & Hold",
+            line=dict(color="#f4bb55", width=1.5)
+        ))
+        equity_chart.update_layout(
+            title="SIMULATED EQUITY / STRATEGY VS BUY & HOLD",
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="#04121a",
+            height=440,
+            hovermode="x unified",
+            margin=dict(l=55, r=25, t=65, b=45),
+            font=dict(family="IBM Plex Mono, monospace", color="#a6d7dc", size=10),
+            xaxis=dict(title="SESSION DATE", gridcolor="rgba(8,245,239,.09)"),
+            yaxis=dict(title="ACCOUNT VALUE (USD)", tickprefix="$", gridcolor="rgba(8,245,239,.09)")
+        )
+        st.plotly_chart(equity_chart, use_container_width=True)
+        st.warning(
+            "Educational historical simulation only. Signals execute on the "
+            "following session to reduce look-ahead bias. Results omit slippage, "
+            "taxes, and real-world execution constraints. No orders are placed."
+        )
+    else:
+        st.info("Set the test parameters, then run a backtest to compare the rule with buy-and-hold.")
 
-            data = data.copy()
-            data["Signal"] = (
-                data["SMA50"] > data["SMA200"]
-            ).astype(int)
+# -----------------------------------------
+# STUDY STUDIO
+# -----------------------------------------
 
-            data["Strategy"] = (
-                data["Signal"].shift(1) * data["Returns"]
-            )
+elif page == "Study Studio":
 
-            data["BuyHold"] = data["Returns"]
+    st.markdown('<p class="nova-eyebrow">NOVA // LEARNING SYSTEM</p>', unsafe_allow_html=True)
+    st.title("Study Studio")
+    st.markdown(
+        '<div class="nova-school-note"><strong>YOUR TUTOR, NOT A SUBSTITUTE.</strong> '
+        'Use NOVA to understand concepts, plan assignments, practice, and get feedback. '
+        'You stay in control of your work; it will coach you instead of writing a '
+        'complete graded submission.</div>',
+        unsafe_allow_html=True
+    )
+    api_key, model = get_study_ai_settings()
+    if api_key:
+        st.success(f"Study tutor connected / {escape(model)}")
+    else:
+        st.info(
+            "To activate the AI tutor, add OPENAI_API_KEY in Streamlit Cloud "
+            "App settings → Secrets. Never put the key in GitHub."
+        )
+    st.caption(
+        "Submitting a question sends it to the configured OpenAI API and may "
+        "incur provider usage charges. Avoid entering private or sensitive information."
+    )
 
-            strategy_return = (
-                (1 + data["Strategy"].dropna()).prod() - 1
-            ) * 100
+    for message in st.session_state.study_messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-            buyhold_return = (
-                (1 + data["BuyHold"].dropna()).prod() - 1
-            ) * 100
+    with st.form("study_question_form", clear_on_submit=False):
+        subject_col, mode_col = st.columns(2)
+        subject = subject_col.selectbox(
+            "Subject",
+            ["General", "Math", "Science", "History", "English / Writing", "Computer Science", "Other"],
+            key="study_subject"
+        )
+        help_mode = mode_col.selectbox(
+            "How should NOVA help?",
+            ["Explain a concept", "Guide me step by step", "Quiz me", "Review my draft", "Help me plan"],
+            key="study_help_mode"
+        )
+        st.text_area(
+            "Question, topic, or draft excerpt",
+            key="study_prompt",
+            height=140,
+            placeholder="Ask a question or describe what you are working on..."
+        )
+        ask_tutor = st.form_submit_button("ASK THE TUTOR", type="primary")
 
-            a, b = st.columns(2)
-            a.metric("Strategy Return", f"{strategy_return:.2f}%")
-            b.metric("Buy & Hold Return", f"{buyhold_return:.2f}%")
-
-            equity = pd.DataFrame({
-                "Strategy": (1 + data["Strategy"].fillna(0)).cumprod(),
-                "Buy & Hold": (1 + data["BuyHold"].fillna(0)).cumprod()
-            })
-
-            st.line_chart(equity)
-
-            st.warning(
-                "Historical simulation only. This simple model does not "
-                "include all real-world trading costs, slippage or taxes."
+    if ask_tutor:
+        prompt = st.session_state.study_prompt.strip()
+        api_key, model = get_study_ai_settings()
+        if not prompt:
+            st.warning("Enter a question or topic first.")
+        elif not api_key:
+            st.error(
+                "The study assistant is not connected yet. Add OPENAI_API_KEY "
+                "to Streamlit Cloud → App settings → Secrets. The key must not "
+                "be committed to GitHub."
             )
         else:
-            st.error("Could not retrieve historical data.")
+            history = [
+                {"role": item["role"], "content": item["content"]}
+                for item in st.session_state.study_messages[-10:]
+            ]
+            pending_messages = history + [{"role": "user", "content": prompt}]
+            try:
+                with st.spinner("NOVA IS THINKING..."):
+                    answer = request_study_tutor(
+                        pending_messages, subject, help_mode, model, api_key
+                    )
+                st.session_state.study_messages = pending_messages + [
+                    {"role": "assistant", "content": answer}
+                ]
+                st.session_state.last_study_response = answer
+                st.rerun()
+            except HTTPError as error:
+                st.error(
+                    f"The OpenAI API returned HTTP {error.code}. Check the "
+                    "configured key, model, and provider account."
+                )
+            except (URLError, TimeoutError, ValueError, KeyError) as error:
+                st.error(f"Study assistant request failed: {error}")
 
 # -----------------------------------------
 # SYSTEM INFORMATION
@@ -1639,20 +2051,21 @@ elif page == "System Information":
     - Custom-universe market screening
     - Portfolio valuation, performance and correlation
     - Galaxy research radar
-    - Historical strategy simulation
+    - Moving-average historical backtesting with transaction-cost estimates
+    - Voice navigation and a configurable tutoring assistant
 
     **Planned modules**
-    - Multi-strategy optimization
     - Research report generation
     - Persistent database
     - User authentication
+    - More backtest strategies and walk-forward analysis
 
     **System limitations**
     - Market data may be delayed.
-    - Research outputs are historical simulations.
+    - Research outputs are historical simulations, not predictions.
     - No brokerage connection or trade execution.
-    - Notebook research modules are not automatically connected
-      to this standalone application.
     - Screening is limited to the user-provided ticker universe.
+    - Study Studio requires an OpenAI API key configured in deployment
+      secrets; prompts are sent to that provider only when submitted.
     """)
 

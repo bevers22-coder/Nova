@@ -44,6 +44,12 @@
       animation-duration: .42s;
       box-shadow: 0 0 8px rgba(8,245,239,.75);
     }
+    .control.speaking .visualizer span {
+      opacity: 1;
+      animation-name: voice-pulse;
+      animation-duration: .7s;
+      box-shadow: 0 0 8px rgba(8,245,239,.75);
+    }
     @keyframes idle-pulse {
       50% { height: 11px; opacity: .8; }
     }
@@ -72,6 +78,16 @@
       opacity: .5;
       cursor: not-allowed;
     }
+    #speak {
+      width: auto;
+      height: 34px;
+      flex: 0 0 auto;
+      padding: 0 10px;
+      border-radius: 2px;
+      font: 600 10px "IBM Plex Mono", "Courier New", monospace;
+      letter-spacing: .08em;
+    }
+    #speak[hidden] { display: none; }
     #status {
       color: #78b9c3;
       line-height: 1.5;
@@ -83,6 +99,7 @@
   <div class="control" id="control">
     <button id="talk" type="button" aria-label="Start voice recognition" title="Start voice recognition">◉</button>
     <div id="status" role="status" aria-live="polite">VOICE LINK STANDBY / CLICK TO SPEAK</div>
+    <button id="speak" type="button" hidden>▶ SPEAK ANSWER</button>
     <div class="visualizer" aria-hidden="true">
       <span></span><span></span><span></span><span></span><span></span>
       <span></span><span></span><span></span><span></span><span></span>
@@ -90,9 +107,12 @@
   </div>
   <script>
     const talk = document.getElementById("talk");
+    const speak = document.getElementById("speak");
     const status = document.getElementById("status");
     const control = document.getElementById("control");
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let responseText = "";
+    let activeUtterance = null;
 
     function setValue(value) {
       window.parent.postMessage({
@@ -115,6 +135,38 @@
       talk.disabled = true;
       status.textContent = "VOICE LINK UNAVAILABLE / USE CHROME OR EDGE";
     }
+
+    speak.addEventListener("click", () => {
+      if (!responseText || !window.speechSynthesis) {
+        status.textContent = "SPEECH OUTPUT UNAVAILABLE IN THIS BROWSER";
+        return;
+      }
+      window.speechSynthesis.cancel();
+      activeUtterance = new SpeechSynthesisUtterance(responseText);
+      activeUtterance.onstart = () => control.classList.add("speaking");
+      activeUtterance.onend = () => {
+        control.classList.remove("speaking");
+        status.textContent = "VOICE LINK STANDBY / CLICK TO SPEAK";
+      };
+      activeUtterance.onerror = () => {
+        control.classList.remove("speaking");
+        status.textContent = "SPEECH OUTPUT ERROR";
+      };
+      status.textContent = "NOVA SPEAKING";
+      activeUtterance.lang = navigator.language || "en-US";
+      window.speechSynthesis.speak(activeUtterance);
+    });
+
+    window.addEventListener("message", (event) => {
+      const message = event.data;
+      if (!message || message.type !== "streamlit:render" || !message.args) return;
+      const nextResponse = String(message.args.response_text || "");
+      if (nextResponse && nextResponse !== responseText) {
+        responseText = nextResponse;
+        speak.hidden = false;
+        setHeight();
+      }
+    });
 
     talk.addEventListener("click", () => {
       if (!SpeechRecognition) return;
