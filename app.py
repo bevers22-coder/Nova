@@ -690,7 +690,7 @@ def get_naperville_weather():
         "&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch"
         "&timezone=America%2FChicago&forecast_days=5"
     )
-    with urlopen(url, timeout=8) as response:
+    with urlopen(url, timeout=3) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -713,7 +713,7 @@ def describe_weather_code(code):
 @st.cache_data(ttl=900, show_spinner=False)
 def get_news(feed_url, limit=8):
     request = Request(feed_url, headers={"User-Agent": "NovaMarketIntelligence/1.0"})
-    with urlopen(request, timeout=8) as response:
+    with urlopen(request, timeout=3) as response:
         root = ET.fromstring(response.read())
 
     stories = []
@@ -733,7 +733,8 @@ def get_news(feed_url, limit=8):
 def render_news_feed(title, feed_url):
     st.markdown(f'<div class="nova-small">{title}</div>', unsafe_allow_html=True)
     try:
-        stories = get_news(feed_url)
+        with st.spinner("CONNECTING TO NEWS FEED..."):
+            stories = get_news(feed_url)
     except (OSError, TimeoutError, ValueError, ET.ParseError) as error:
         st.warning(f"{title} is temporarily unavailable ({error}).")
         return
@@ -784,7 +785,8 @@ def render_naperville_context():
         )
     with weather_col:
         try:
-            weather = get_naperville_weather()
+            with st.spinner("CONNECTING TO WEATHER FEED..."):
+                weather = get_naperville_weather()
             current = weather["current"]
             st.markdown(
                 '<div class="nova-small">LIVE CONDITIONS // NAPERVILLE, ILLINOIS</div>'
