@@ -54,10 +54,14 @@ st.markdown("""
     color: #c9faff;
     font-family: 'IBM Plex Mono', monospace;
 }
+.stApp [data-testid="stAppViewContainer"], .stApp > header {
+    position: relative;
+    z-index: 1;
+}
 .stApp::before, .stApp::after {
     position: fixed;
     inset: 0;
-    z-index: -1;
+    z-index: 0;
     pointer-events: none;
     content: "";
 }
@@ -784,50 +788,56 @@ def render_naperville_context():
             unsafe_allow_html=True
         )
     with weather_col:
-        try:
-            with st.spinner("CONNECTING TO WEATHER FEED..."):
-                weather = get_naperville_weather()
-            current = weather["current"]
-            st.markdown(
-                '<div class="nova-small">LIVE CONDITIONS // NAPERVILLE, ILLINOIS</div>'
-                f'<span class="nova-weather-temp">{current["temperature_2m"]:.0f}°F</span>'
-                f' &nbsp; {describe_weather_code(current["weather_code"])}',
-                unsafe_allow_html=True
-            )
-            metrics = st.columns(4)
-            metrics[0].markdown(
-                f'<div class="nova-small">FEELS LIKE</div>{current["apparent_temperature"]:.0f}°F',
-                unsafe_allow_html=True
-            )
-            metrics[1].markdown(
-                f'<div class="nova-small">HUMIDITY</div>{current["relative_humidity_2m"]:.0f}%',
-                unsafe_allow_html=True
-            )
-            metrics[2].markdown(
-                f'<div class="nova-small">WIND</div>{current["wind_speed_10m"]:.0f} mph',
-                unsafe_allow_html=True
-            )
-            forecast = weather["daily"]
-            forecast_text = "  //  ".join(
-                f'{datetime.fromisoformat(day).strftime("%a")} '
-                f'{forecast["temperature_2m_min"][index]:.0f}°/'
-                f'{forecast["temperature_2m_max"][index]:.0f}° '
-                f'{describe_weather_code(forecast["weather_code"][index])}'
-                for index, day in enumerate(forecast["time"])
-            )
-            metrics[3].markdown(
-                f'<div class="nova-small">PRECIP.</div>{current["precipitation"]:.2f} in',
-                unsafe_allow_html=True
-            )
-            st.markdown(
-                f'<div class="nova-small">5-DAY OUTLOOK &nbsp; {forecast_text}</div>',
-                unsafe_allow_html=True
-            )
-        except (OSError, TimeoutError, ValueError, KeyError) as error:
-            st.warning(
-                f"Naperville weather is temporarily unavailable ({error}). "
-                "The local clock remains active."
-            )
+        st.markdown(
+            '<div class="nova-small">LIVE CONDITIONS // NAPERVILLE, ILLINOIS</div>',
+            unsafe_allow_html=True
+        )
+        if st.button("LOAD LOCAL WEATHER", key="load_naperville_weather"):
+            try:
+                with st.spinner("CONNECTING TO WEATHER FEED..."):
+                    weather = get_naperville_weather()
+                current = weather["current"]
+                st.markdown(
+                    f'<span class="nova-weather-temp">{current["temperature_2m"]:.0f}°F</span>'
+                    f' &nbsp; {describe_weather_code(current["weather_code"])}',
+                    unsafe_allow_html=True
+                )
+                metrics = st.columns(4)
+                metrics[0].markdown(
+                    f'<div class="nova-small">FEELS LIKE</div>{current["apparent_temperature"]:.0f}°F',
+                    unsafe_allow_html=True
+                )
+                metrics[1].markdown(
+                    f'<div class="nova-small">HUMIDITY</div>{current["relative_humidity_2m"]:.0f}%',
+                    unsafe_allow_html=True
+                )
+                metrics[2].markdown(
+                    f'<div class="nova-small">WIND</div>{current["wind_speed_10m"]:.0f} mph',
+                    unsafe_allow_html=True
+                )
+                forecast = weather["daily"]
+                forecast_text = "  //  ".join(
+                    f'{datetime.fromisoformat(day).strftime("%a")} '
+                    f'{forecast["temperature_2m_min"][index]:.0f}°/'
+                    f'{forecast["temperature_2m_max"][index]:.0f}° '
+                    f'{describe_weather_code(forecast["weather_code"][index])}'
+                    for index, day in enumerate(forecast["time"])
+                )
+                metrics[3].markdown(
+                    f'<div class="nova-small">PRECIP.</div>{current["precipitation"]:.2f} in',
+                    unsafe_allow_html=True
+                )
+                st.markdown(
+                    f'<div class="nova-small">5-DAY OUTLOOK &nbsp; {forecast_text}</div>',
+                    unsafe_allow_html=True
+                )
+            except (OSError, TimeoutError, ValueError, KeyError) as error:
+                st.warning(
+                    f"Naperville weather is temporarily unavailable ({error}). "
+                    "The local clock remains active."
+                )
+        else:
+            st.caption("Weather loads on request; the local clock is active.")
 
 
 # -----------------------------------------
@@ -1068,7 +1078,10 @@ if page == "Command Center":
     st.dataframe(portfolio_table, use_container_width=True, hide_index=True)
     st.divider()
     st.subheader("Live Intelligence Feeds")
-    render_market_news()
+    if st.button("LOAD LIVE NEWS", key="load_market_news"):
+        render_market_news()
+    else:
+        st.caption("Live news feeds load when requested.")
     st.markdown(
         '<div class="nova-small">COMMAND DECK &nbsp; • &nbsp; '
         'STOCK INTELLIGENCE &nbsp; • &nbsp; MARKET SCREENER &nbsp; • &nbsp; '
