@@ -15,11 +15,13 @@ The backtesting lab compares a configurable long/cash moving-average rule with
 buy-and-hold using historical data and estimated transaction costs; it does not
 place trades.
 
-Portfolio analytics values holdings from their latest available raw closing
-prices and uses dividend-adjusted history for return estimates. The default
-holdings are examples, not a connected brokerage account; historical metrics
-apply current share counts to past prices and are not actual account performance.
-Unavailable holdings are identified rather than silently included in totals.
+Portfolio analytics starts empty because it is not connected to a brokerage;
+enter the tickers and share counts you actually hold. Today's P&L uses the
+latest available intraday quote when available and shows both dollar and
+percentage changes. Historical estimates use dividend-adjusted prices and
+apply current share counts to past prices, so they are not actual account
+performance. Unavailable holdings are identified rather than silently
+included in totals.
 
 Study Studio is an AI-powered tutoring interface for explanations, practice,
 planning, and draft feedback. It does not generate complete graded submissions.

@@ -37,6 +37,7 @@ class PortfolioAnalyticsTests(unittest.TestCase):
         )
 
         self.assertEqual(analytics.total_value, 152)
+        self.assertEqual(analytics.daily_change_amount, 5)
         self.assertAlmostEqual(analytics.daily_change_pct, (152 / 147 - 1) * 100)
         self.assertAlmostEqual(analytics.one_year_return_pct, (149 / 125 - 1) * 100)
         self.assertAlmostEqual(
@@ -68,6 +69,46 @@ class PortfolioAnalyticsTests(unittest.TestCase):
         self.assertEqual(stale_holding["Quote Date"], "2025-01-06")
         self.assertEqual(stale_holding["Latest Price"], 20)
         self.assertIsNone(analytics.one_year_return_pct)
+        self.assertIsNone(analytics.daily_change_amount)
+
+    def test_intraday_quotes_drive_todays_dollar_gain(self):
+        daily_index = pd.to_datetime(["2026-11-12", "2026-11-13"])
+        daily_history = {
+            "AAA": pd.DataFrame(
+                {"Close": [100, 96], "Adj Close": [100, 96]},
+                index=daily_index,
+            ),
+            "BBB": pd.DataFrame(
+                {"Close": [50, 49], "Adj Close": [50, 49]},
+                index=daily_index,
+            ),
+        }
+        intraday_index = pd.DatetimeIndex(
+            ["2026-11-13 12:00"],
+            tz="America/New_York",
+        )
+        intraday_history = {
+            "AAA": pd.DataFrame({"Close": [105]}, index=intraday_index),
+            "BBB": pd.DataFrame({"Close": [45]}, index=intraday_index),
+        }
+
+        analytics = calculate_portfolio_analytics(
+            {"AAA": 2, "BBB": 1},
+            daily_history,
+            intraday_history,
+        )
+
+        self.assertEqual(analytics.total_value, 255)
+        self.assertEqual(analytics.daily_change_amount, 5)
+        self.assertAlmostEqual(analytics.daily_change_pct, 5 / 250 * 100)
+        self.assertEqual(
+            analytics.holdings.set_index("Ticker").loc["AAA", "Day Change ($)"],
+            10,
+        )
+        self.assertEqual(
+            analytics.holdings.set_index("Ticker").loc["BBB", "Day Change ($)"],
+            -5,
+        )
 
     def test_keeps_valuation_when_adjusted_history_is_unavailable(self):
         index = pd.to_datetime(["2024-01-05", "2025-01-06"])

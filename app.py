@@ -40,29 +40,30 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Rajdhani:wght@500;600;700&display=swap');
 :root {
-    --nova-cyan: #08f5ef;
-    --nova-blue: #12a9c5;
-    --nova-muted: #75aeb8;
-    --nova-line: rgba(8, 245, 239, .27);
-    --nova-panel: rgba(3, 18, 27, .88);
+    --nova-cyan: #42d7ff;
+    --nova-blue: #167fe8;
+    --nova-violet: #845cff;
+    --nova-muted: #8ea8c2;
+    --nova-line: rgba(100, 177, 235, .28);
+    --nova-panel: rgba(4, 9, 17, .9);
 }
 [data-testid="stButton"] button[kind="primary"] {
-    color: #021014;
-    background: linear-gradient(110deg, #08f5ef, #67d9e3);
-    border-color: #a4ffff;
-    box-shadow: 0 0 18px rgba(8, 245, 239, .22);
+    color: #06101a;
+    background: linear-gradient(110deg, #63cfff, #8b78ff);
+    border-color: #c3dfff;
+    box-shadow: 0 0 18px rgba(66, 180, 255, .25);
 }
 .stApp {
     position: relative;
     isolation: isolate;
     background:
-        radial-gradient(ellipse at 50% 38%, rgba(0, 164, 186, .14), transparent 46%),
-        radial-gradient(ellipse at 90% 0%, rgba(0, 238, 231, .10), transparent 32%),
-        linear-gradient(rgba(8, 245, 239, .035) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(8, 245, 239, .035) 1px, transparent 1px),
-        #02090e;
-    background-size: auto, auto, 32px 32px, 32px 32px, auto;
-    color: #c9faff;
+        radial-gradient(ellipse at 50% 42%, rgba(21, 107, 181, .19), transparent 39%),
+        radial-gradient(ellipse at 50% 42%, rgba(3, 7, 13, .04), #03060a 77%),
+        linear-gradient(rgba(116, 164, 203, .025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(116, 164, 203, .025) 1px, transparent 1px),
+        #03060a;
+    background-size: auto, auto, 36px 36px, 36px 36px, auto;
+    color: #d7e8f7;
     font-family: 'IBM Plex Mono', monospace;
 }
 .stApp [data-testid="stAppViewContainer"], .stApp > header {
@@ -77,21 +78,26 @@ st.markdown("""
     content: "";
 }
 .stApp::before {
-    opacity: .36;
+    opacity: .5;
     background:
-        radial-gradient(circle at 13% 24%, #08f5ef 0 1px, transparent 2px),
-        radial-gradient(circle at 77% 63%, #08f5ef 0 1px, transparent 2px),
-        radial-gradient(circle at 44% 82%, #12a9c5 0 1px, transparent 2px),
-        linear-gradient(115deg, transparent 47%, rgba(8,245,239,.06) 48%, transparent 49%);
-    background-size: 173px 151px, 211px 187px, 139px 197px, 100% 100%;
+        radial-gradient(circle at 50% 43%, transparent 0 17.8%, rgba(78, 196, 255, .36) 18%, rgba(78, 196, 255, .08) 18.2%, transparent 18.55%),
+        radial-gradient(circle at 50% 43%, transparent 0 21.3%, rgba(187, 206, 225, .24) 21.45%, transparent 21.7% 24.7%, rgba(100, 157, 208, .22) 24.85%, transparent 25.05%),
+        repeating-conic-gradient(from 2deg at 50% 43%, transparent 0 8deg, rgba(120, 194, 238, .13) 8.15deg 8.35deg, transparent 8.5deg 16deg),
+        radial-gradient(circle at 13% 24%, #42d7ff 0 1px, transparent 2px),
+        radial-gradient(circle at 77% 63%, #42d7ff 0 1px, transparent 2px),
+        radial-gradient(circle at 44% 82%, #845cff 0 1px, transparent 2px),
+        linear-gradient(115deg, transparent 47%, rgba(91, 174, 231, .045) 48%, transparent 49%);
+    background-size: auto, auto, auto, 173px 151px, 211px 187px, 139px 197px, 100% 100%;
     animation: nova-drift 32s linear infinite;
 }
 .stApp::after {
-    opacity: .28;
-    background: repeating-linear-gradient(
-        0deg, transparent 0 5px, rgba(8,245,239,.025) 6px, transparent 7px
-    );
-    animation: nova-scan 12s linear infinite;
+    opacity: .2;
+    background:
+        repeating-linear-gradient(0deg, transparent 0 5px, rgba(120, 170, 212, .025) 6px, transparent 7px),
+        linear-gradient(90deg, transparent 4%, var(--nova-blue) 13%, var(--nova-violet) 87%, transparent 96%);
+    background-size: auto, 100% 2px;
+    background-position: 0 0, 0 100%;
+    background-repeat: repeat, no-repeat;
 }
 [data-testid="stSidebar"], [data-testid="collapsedControl"],
 [data-testid="stSidebarCollapsedControl"] {
@@ -108,14 +114,14 @@ h1, h2, h3, h4 {
     color: var(--nova-muted);
 }
 div[data-testid="stMetric"] {
-    background: linear-gradient(145deg, rgba(5, 28, 38, .96), rgba(3, 14, 21, .96));
+    background: linear-gradient(145deg, rgba(13, 26, 42, .94), rgba(5, 9, 16, .97));
     border: 1px solid var(--nova-line);
     border-radius: 2px;
     padding: 14px 16px;
     box-shadow: inset 0 1px 0 rgba(150, 233, 245, .05), 0 0 16px rgba(8, 245, 239, .035);
 }
 [data-testid="stMetricLabel"] {
-    color: #69aab7;
+    color: #9eb4c9;
     text-transform: uppercase;
     letter-spacing: .13em;
     font-size: .68rem;
@@ -125,16 +131,16 @@ div[data-testid="stMetric"] {
     font-family: 'Rajdhani', sans-serif;
 }
 .stButton button {
-    background: linear-gradient(110deg, #063340, #092531);
-    color: #e7fbff;
-    border: 1px solid #0daeb7;
+    background: linear-gradient(110deg, #0b1c2d, #151328);
+    color: #e2f1ff;
+    border: 1px solid #357fba;
     border-radius: 1px;
     letter-spacing: .10em;
     font-family: 'IBM Plex Mono', monospace;
     box-shadow: inset 0 0 14px rgba(8, 245, 239, .04);
 }
 .stButton button:hover {
-    background: #0a4b59;
+    background: #102e4b;
     border-color: var(--nova-cyan);
     color: white;
     box-shadow: 0 0 18px rgba(8, 245, 239, .2);
@@ -166,7 +172,7 @@ div[data-testid="stAlert"] {
     border-radius: 1px;
 }
 hr {
-    border-color: rgba(8, 245, 239, .16);
+    border-color: rgba(100, 177, 235, .2);
 }
 .nova-eyebrow {
     color: var(--nova-cyan);
@@ -451,10 +457,11 @@ hr {
     to { transform: rotate(-360deg); }
 }
 @keyframes nova-drift {
-    to { background-position: 173px 151px, -211px -187px, 139px -197px, 0 0; }
-}
-@keyframes nova-scan {
-    to { background-position-y: 100vh; }
+    to {
+        background-position:
+            0 0, 0 0, 0 0,
+            173px 151px, -211px -187px, 139px -197px, 0 0;
+    }
 }
 @keyframes nova-pulse {
     50% { box-shadow: 0 0 30px rgba(8,245,239,.58), inset 0 0 22px rgba(8,245,239,.28); }
@@ -580,6 +587,39 @@ def get_portfolio_data(ticker, period="2y"):
     if "Adj Close" in data.columns:
         columns.append("Adj Close")
     return data[columns].dropna(subset=["Close"])
+
+
+@st.cache_data(ttl=60)
+def get_portfolio_intraday_data(tickers):
+    if not tickers:
+        return pd.DataFrame()
+
+    data = yf.download(
+        list(tickers),
+        period="5d",
+        interval="1m",
+        auto_adjust=False,
+        progress=False,
+        group_by="column",
+    )
+    if data.empty:
+        return pd.DataFrame()
+
+    if isinstance(data.columns, pd.MultiIndex):
+        if "Close" in data.columns.get_level_values(0):
+            prices = data["Close"]
+        elif "Close" in data.columns.get_level_values(1):
+            prices = data.xs("Close", axis=1, level=1)
+        else:
+            return pd.DataFrame()
+    elif len(tickers) == 1 and "Close" in data.columns:
+        prices = data[["Close"]].rename(columns={"Close": tickers[0]})
+    else:
+        return pd.DataFrame()
+
+    if isinstance(prices, pd.Series):
+        prices = prices.to_frame(name=tickers[0])
+    return prices.dropna(how="all")
 
 
 def discover_stock(query):
@@ -1101,16 +1141,7 @@ def render_naperville_context():
 # -----------------------------------------
 
 if "portfolio" not in st.session_state:
-    st.session_state.portfolio = {
-        "NVDA": 1,
-        "ORCL": 5,
-        "PLTR": 1,
-        "MRVL": 2,
-        "FTNT": 1,
-        "ABBV": 1,
-        "MP": 1,
-        "PG": 12
-    }
+    st.session_state.portfolio = {}
 
 if "radar" not in st.session_state:
     st.session_state.radar = []
@@ -1757,15 +1788,17 @@ elif page == "Portfolio Analytics":
         st.caption("HOLDINGS / ALLOCATION / HISTORICAL RISK & PERFORMANCE")
 
         st.caption(
-            "The starting holdings are examples. Update the symbols and share "
-            "counts to match your account."
+            "Enter the shares in your account below. Nova is not connected to a "
+            "brokerage and does not import positions or transactions."
         )
         st.subheader("Edit Holdings")
         ticker_input = st.text_input("Ticker symbol")
         shares_input = st.number_input(
             "Number of shares",
-            min_value=0,
-            step=1
+            min_value=0.0,
+            value=0.0,
+            step=0.01,
+            format="%.4f"
         )
 
         if st.button("UPDATE HOLDING"):
@@ -1776,7 +1809,7 @@ elif page == "Portfolio Analytics":
             elif shares_input == 0:
                 st.session_state.portfolio.pop(ticker, None)
             else:
-                st.session_state.portfolio[ticker] = int(shares_input)
+                st.session_state.portfolio[ticker] = float(shares_input)
 
         price_history = {}
         data_errors = {}
@@ -1800,10 +1833,37 @@ elif page == "Portfolio Analytics":
             )
 
         if price_history:
+            intraday_errors = []
+            try:
+                intraday_data = get_portfolio_intraday_data(
+                    tuple(price_history)
+                )
+            except Exception as error:
+                intraday_data = pd.DataFrame()
+                intraday_errors.append(str(error))
+
+            intraday_history = {
+                ticker: intraday_data[[ticker]].rename(columns={ticker: "Close"})
+                for ticker in price_history
+                if ticker in intraday_data.columns
+            }
+            fallback_tickers = sorted(set(price_history) - set(intraday_history))
+            if intraday_errors:
+                st.warning(
+                    "Intraday quotes are unavailable; the portfolio uses the "
+                    f"latest daily closes instead ({intraday_errors[0]})."
+                )
+            elif fallback_tickers:
+                st.caption(
+                    "Using the latest daily close where an intraday quote is "
+                    f"unavailable: {', '.join(fallback_tickers)}."
+                )
+
             try:
                 analytics = calculate_portfolio_analytics(
                     st.session_state.portfolio,
-                    price_history
+                    price_history,
+                    intraday_history
                 )
             except ValueError as error:
                 st.warning(f"Portfolio analytics could not be calculated: {error}")
@@ -1818,11 +1878,20 @@ elif page == "Portfolio Analytics":
                     f"${analytics.total_value:,.2f}"
                 )
                 b.metric(
-                    "Daily Change",
                     (
-                        f"{analytics.daily_change_pct:.2f}%"
-                        if analytics.daily_change_pct is not None else "N/A"
-                    )
+                        "Today's P&L"
+                        if analytics.as_of.date()
+                        == datetime.now(ZoneInfo("America/New_York")).date()
+                        else "Last Session P&L"
+                    ),
+                    (
+                        f"${analytics.daily_change_amount:+,.2f}"
+                        if analytics.daily_change_amount is not None else "N/A"
+                    ),
+                    delta=(
+                        f"{analytics.daily_change_pct:+.2f}%"
+                        if analytics.daily_change_pct is not None else None
+                    ),
                 )
                 c.metric(
                     "1Y Total Return",
@@ -1845,9 +1914,16 @@ elif page == "Portfolio Analytics":
                         if analytics.max_drawdown_pct is not None else "N/A"
                     )
                 )
+                quote_time = (
+                    analytics.as_of.strftime("%b %d, %I:%M %p %Z")
+                    if analytics.as_of.tzinfo
+                    else analytics.as_of.strftime("%b %d, %Y")
+                )
                 st.caption(
-                    f"Prices as of {analytics.as_of:%b %d, %Y}. Each holding uses "
-                    "its latest available close; quote dates are shown below."
+                    f"Prices through {quote_time}. P&L compares entered shares "
+                    "with prior closes, may be delayed, and is withheld when quote "
+                    "dates do not align. Refresh to request quotes again (cached "
+                    "for 60 seconds)."
                 )
 
                 st.dataframe(
@@ -1856,6 +1932,7 @@ elif page == "Portfolio Analytics":
                     hide_index=True,
                     column_config={
                         "Latest Price": st.column_config.NumberColumn(format="$%.2f"),
+                        "Day Change ($)": st.column_config.NumberColumn(format="$%.2f"),
                         "Day Change (%)": st.column_config.NumberColumn(format="%.2f%%"),
                         "1Y Total Return (%)": st.column_config.NumberColumn(
                             format="%.2f%%"
@@ -1897,12 +1974,15 @@ elif page == "Portfolio Analytics":
                         use_container_width=True
                     )
         elif not data_errors:
-            st.info("Add a holding to see its portfolio analytics.")
+            st.info(
+                "Add your actual ticker symbols and share counts to calculate "
+                "portfolio value and today's gain or loss."
+            )
 
         st.caption(
-            "Historical estimates apply today's share counts to adjusted historical "
-            "prices; they are not actual account performance and exclude cash flows, "
-            "fees, taxes and transaction history."
+            "One-year estimates apply the entered share counts to adjusted history; "
+            "they are not actual account performance and exclude cash flows, fees, "
+            "taxes and transaction history."
         )
 
 # -----------------------------------------
