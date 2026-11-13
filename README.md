@@ -15,6 +15,12 @@ The backtesting lab compares a configurable long/cash moving-average rule with
 buy-and-hold using historical data and estimated transaction costs; it does not
 place trades.
 
+Portfolio analytics values holdings from their latest available raw closing
+prices and uses dividend-adjusted history for return estimates. The default
+holdings are examples, not a connected brokerage account; historical metrics
+apply current share counts to past prices and are not actual account performance.
+Unavailable holdings are identified rather than silently included in totals.
+
 Study Studio is an AI-powered tutoring interface for explanations, practice,
 planning, and draft feedback. It does not generate complete graded submissions.
 To enable it on Streamlit Community Cloud, add these values under **App

@@ -18,6 +18,7 @@ import streamlit.components.v1 as components
 import yfinance as yf
 
 from modules.backtesting import VeyroBacktester
+from modules.portfolio import calculate_portfolio_analytics
 
 # -----------------------------------------
 # NOVA — MARKET INTELLIGENCE
@@ -478,6 +479,36 @@ hr {
     letter-spacing: .06em;
     text-transform: uppercase;
 }
+.st-key-portfolio-dashboard {
+    --portfolio-blue: #63a8ff;
+    padding: 18px;
+    border: 1px solid rgba(99, 168, 255, .34);
+    background:
+        radial-gradient(ellipse at 100% 0%, rgba(147, 91, 255, .15), transparent 38%),
+        linear-gradient(145deg, rgba(5, 20, 43, .9), rgba(15, 11, 35, .9));
+    box-shadow: inset 0 0 32px rgba(99, 168, 255, .035), 0 0 24px rgba(99, 168, 255, .04);
+}
+.st-key-portfolio-dashboard h1,
+.st-key-portfolio-dashboard h2,
+.st-key-portfolio-dashboard h3 {
+    color: #dce8ff !important;
+    text-shadow: 0 0 18px rgba(147, 91, 255, .2);
+}
+.st-key-portfolio-dashboard .nova-eyebrow,
+.st-key-portfolio-dashboard [data-testid="stMetricValue"] {
+    color: var(--portfolio-blue);
+}
+.st-key-portfolio-dashboard [data-testid="stMetric"] {
+    border-color: rgba(147, 91, 255, .34);
+    background: linear-gradient(145deg, rgba(11, 29, 59, .96), rgba(22, 14, 46, .96));
+    box-shadow: inset 0 1px 0 rgba(178, 138, 255, .07), 0 0 16px rgba(99, 168, 255, .04);
+}
+.st-key-portfolio-dashboard [data-testid="stMetricLabel"] {
+    color: #a7b9df;
+}
+.st-key-portfolio-dashboard [data-testid="stDataFrame"] {
+    border-color: rgba(99, 168, 255, .32);
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -524,6 +555,31 @@ def get_stock_data(ticker, period="5y"):
     data["AverageVolume20"] = data["Volume"].rolling(20).mean()
 
     return data.dropna(subset=["Close"])
+
+
+@st.cache_data(ttl=300)
+def get_portfolio_data(ticker, period="2y"):
+    data = yf.download(
+        ticker,
+        period=period,
+        auto_adjust=False,
+        progress=False,
+        group_by="column",
+    )
+
+    if isinstance(data.columns, pd.MultiIndex):
+        if "Close" in data.columns.get_level_values(0):
+            data.columns = data.columns.get_level_values(0)
+        elif "Close" in data.columns.get_level_values(1):
+            data.columns = data.columns.get_level_values(1)
+
+    if data.empty or "Close" not in data.columns:
+        return pd.DataFrame()
+
+    columns = ["Close"]
+    if "Adj Close" in data.columns:
+        columns.append("Adj Close")
+    return data[columns].dropna(subset=["Close"])
 
 
 def discover_stock(query):
@@ -1692,128 +1748,162 @@ elif page == "Galaxy Radar":
 
 elif page == "Portfolio Analytics":
 
-    st.markdown('<p class="nova-eyebrow">NOVA // PORTFOLIO SYSTEM</p>', unsafe_allow_html=True)
-    st.title("Portfolio Intelligence")
-    st.caption("HOLDINGS / ALLOCATION / HISTORICAL RISK & PERFORMANCE")
+    with st.container(key="portfolio-dashboard"):
+        st.markdown(
+            '<p class="nova-eyebrow">NOVA // PORTFOLIO SYSTEM</p>',
+            unsafe_allow_html=True
+        )
+        st.title("Portfolio Intelligence")
+        st.caption("HOLDINGS / ALLOCATION / HISTORICAL RISK & PERFORMANCE")
 
-    st.subheader("Edit Holdings")
+        st.caption(
+            "The starting holdings are examples. Update the symbols and share "
+            "counts to match your account."
+        )
+        st.subheader("Edit Holdings")
+        ticker_input = st.text_input("Ticker symbol")
+        shares_input = st.number_input(
+            "Number of shares",
+            min_value=0,
+            step=1
+        )
 
-    ticker_input = st.text_input("Ticker symbol")
-    shares_input = st.number_input(
-        "Number of shares",
-        min_value=0,
-        step=1
-    )
+        if st.button("UPDATE HOLDING"):
+            ticker = ticker_input.strip().upper()
 
-    if st.button("UPDATE HOLDING"):
-        ticker = ticker_input.strip().upper()
-
-        if ticker and shares_input >= 0:
-            if shares_input == 0:
+            if not ticker:
+                st.warning("Enter a ticker symbol to update a holding.")
+            elif shares_input == 0:
                 st.session_state.portfolio.pop(ticker, None)
             else:
                 st.session_state.portfolio[ticker] = int(shares_input)
 
-    rows = []
-    price_history = {}
+        price_history = {}
+        data_errors = {}
+        for ticker in st.session_state.portfolio:
+            try:
+                data = get_portfolio_data(ticker)
+                if data.empty:
+                    data_errors[ticker] = "No closing-price history was returned."
+                else:
+                    price_history[ticker] = data
+            except Exception as error:
+                data_errors[ticker] = str(error)
 
-    for ticker, shares in st.session_state.portfolio.items():
-        data = get_stock_data(ticker, "1y")
-
-        if not data.empty:
-            price = float(data["Close"].iloc[-1])
-            previous_close = (
-                float(data["Close"].iloc[-2])
-                if len(data) > 1 else price
+        if data_errors:
+            unavailable = ", ".join(
+                f"{ticker} ({reason})" for ticker, reason in data_errors.items()
             )
-            one_year_ago = float(data["Close"].iloc[0])
-            rows.append({
-                "Ticker": ticker,
-                "Shares": shares,
-                "Latest Price": price,
-                "Day Change (%)": (price / previous_close - 1) * 100,
-                "1Y Change (%)": (price / one_year_ago - 1) * 100,
-                "Estimated Value": price * shares
-            })
-            price_history[ticker] = data["Close"]
-
-    if rows:
-        frame = pd.DataFrame(rows)
-        total_value = frame["Estimated Value"].sum()
-        frame["Weight (%)"] = frame["Estimated Value"] / total_value * 100
+            st.warning(
+                "Portfolio data is incomplete; unavailable holdings are excluded "
+                f"from the estimates: {unavailable}"
+            )
 
         if price_history:
-            aligned_prices = pd.concat(price_history, axis=1).sort_index().ffill().dropna()
-            held_values = pd.DataFrame({
-                ticker: aligned_prices[ticker] * st.session_state.portfolio[ticker]
-                for ticker in aligned_prices.columns
-            })
-            historical_portfolio = held_values.sum(axis=1)
-            historical_returns = historical_portfolio.pct_change().dropna()
-            portfolio_total_return = (
-                historical_portfolio.iloc[-1] / historical_portfolio.iloc[0] - 1
-            ) * 100
-            portfolio_volatility = (
-                historical_returns.std() * np.sqrt(252) * 100
-                if not historical_returns.empty else 0
-            )
-            portfolio_drawdown = (
-                historical_portfolio / historical_portfolio.cummax() - 1
-            ).min() * 100
-            daily_change = (
-                historical_returns.iloc[-1] * 100
-                if not historical_returns.empty else 0
-            )
+            try:
+                analytics = calculate_portfolio_analytics(
+                    st.session_state.portfolio,
+                    price_history
+                )
+            except ValueError as error:
+                st.warning(f"Portfolio analytics could not be calculated: {error}")
+            else:
+                frame = analytics.holdings
+                a, b, c, d = st.columns(4)
+                a.metric(
+                    (
+                        "Partial Portfolio Value"
+                        if data_errors else "Estimated Portfolio Value"
+                    ),
+                    f"${analytics.total_value:,.2f}"
+                )
+                b.metric(
+                    "Daily Change",
+                    (
+                        f"{analytics.daily_change_pct:.2f}%"
+                        if analytics.daily_change_pct is not None else "N/A"
+                    )
+                )
+                c.metric(
+                    "1Y Total Return",
+                    (
+                        f"{analytics.one_year_return_pct:.2f}%"
+                        if analytics.one_year_return_pct is not None else "N/A"
+                    )
+                )
+                d.metric(
+                    "1Y Volatility",
+                    (
+                        f"{analytics.annualized_volatility_pct:.2f}%"
+                        if analytics.annualized_volatility_pct is not None else "N/A"
+                    )
+                )
+                st.metric(
+                    "1Y Maximum Drawdown",
+                    (
+                        f"{analytics.max_drawdown_pct:.2f}%"
+                        if analytics.max_drawdown_pct is not None else "N/A"
+                    )
+                )
+                st.caption(
+                    f"Prices as of {analytics.as_of:%b %d, %Y}. Each holding uses "
+                    "its latest available close; quote dates are shown below."
+                )
 
-            a, b, c, d = st.columns(4)
-            a.metric("Estimated Portfolio Value", f"${total_value:,.2f}")
-            b.metric("Daily Change", f"{daily_change:.2f}%")
-            c.metric("1Y Return*", f"{portfolio_total_return:.2f}%")
-            d.metric("1Y Volatility", f"{portfolio_volatility:.2f}%")
-            st.metric("Maximum Drawdown*", f"{portfolio_drawdown:.2f}%")
+                st.dataframe(
+                    frame.sort_values("Market Value", ascending=False),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Latest Price": st.column_config.NumberColumn(format="$%.2f"),
+                        "Day Change (%)": st.column_config.NumberColumn(format="%.2f%%"),
+                        "1Y Total Return (%)": st.column_config.NumberColumn(
+                            format="%.2f%%"
+                        ),
+                        "Market Value": st.column_config.NumberColumn(format="$%.2f"),
+                        "Weight (%)": st.column_config.NumberColumn(format="%.2f%%")
+                    }
+                )
 
-        st.dataframe(
-            frame.sort_values("Estimated Value", ascending=False),
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Latest Price": st.column_config.NumberColumn(format="$%.2f"),
-                "Day Change (%)": st.column_config.NumberColumn(format="%.2f%%"),
-                "1Y Change (%)": st.column_config.NumberColumn(format="%.2f%%"),
-                "Estimated Value": st.column_config.NumberColumn(format="$%.2f"),
-                "Weight (%)": st.column_config.NumberColumn(format="%.2f%%")
-            }
+                colors = [
+                    "#62a8ff", "#a886ff", "#4079d8", "#cf8cff",
+                    "#81c4ff", "#8057c9", "#b9a2ff", "#526fe0"
+                ]
+                fig = go.Figure(go.Pie(
+                    labels=frame["Ticker"],
+                    values=frame["Market Value"],
+                    hole=0.62,
+                    marker=dict(
+                        colors=[colors[index % len(colors)] for index in range(len(frame))],
+                        line=dict(color="#090d1b", width=2)
+                    ),
+                    hovertemplate="%{label}<br>$%{value:,.2f} (%{percent})<extra></extra>"
+                ))
+                fig.update_layout(
+                    title="CURRENT ALLOCATION",
+                    template="plotly_dark",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#c8d8ff", family="IBM Plex Mono, monospace"),
+                    title_font=dict(color="#9fc5ff"),
+                    legend=dict(font=dict(color="#c8d8ff"))
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                if len(frame) > 1:
+                    st.subheader("Holdings Correlation")
+                    st.dataframe(
+                        analytics.correlation,
+                        use_container_width=True
+                    )
+        elif not data_errors:
+            st.info("Add a holding to see its portfolio analytics.")
+
+        st.caption(
+            "Historical estimates apply today's share counts to adjusted historical "
+            "prices; they are not actual account performance and exclude cash flows, "
+            "fees, taxes and transaction history."
         )
-
-        fig = go.Figure(go.Pie(
-            labels=frame["Ticker"],
-            values=frame["Estimated Value"],
-            hole=0.62,
-            marker=dict(colors=["#43c7d9", "#f0aa56", "#6e9eff", "#54d6a5", "#9d83eb"])
-        ))
-
-        fig.update_layout(
-            title="CURRENT ALLOCATION",
-            template="plotly_dark",
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)"
-        )
-
-        st.plotly_chart(fig, use_container_width=True)
-
-        if len(price_history) > 1:
-            st.subheader("Holdings Correlation")
-            returns_by_ticker = aligned_prices.pct_change().dropna()
-            st.dataframe(
-                returns_by_ticker.corr().round(2),
-                use_container_width=True
-            )
-
-    st.caption(
-        "*Historical estimates hold today's share counts constant over the "
-        "available period; they are not actual account performance and exclude "
-        "cash flows, fees, taxes and transaction history."
-    )
 
 # -----------------------------------------
 # BACKTESTING LAB
