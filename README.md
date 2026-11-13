@@ -18,10 +18,10 @@ place trades.
 Portfolio analytics starts empty because it is not connected to a brokerage;
 enter the tickers and share counts you actually hold. Today's P&L uses the
 latest available intraday quote when available and shows both dollar and
-percentage changes. Historical estimates use dividend-adjusted prices and
-apply current share counts to past prices, so they are not actual account
-performance. Unavailable holdings are identified rather than silently
-included in totals.
+percentage changes; provider quotes may be delayed. Historical estimates use
+dividend-adjusted prices and apply current share counts to past prices, so they
+are not actual account performance. Unavailable holdings are identified rather
+than silently included in totals.
 
 Study Studio is an AI-powered tutoring interface for explanations, practice,
 planning, and draft feedback. It does not generate complete graded submissions.
