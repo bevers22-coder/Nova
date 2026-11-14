@@ -42,6 +42,19 @@ class VeyroBacktesterTests(unittest.TestCase):
                 slow=2
             )
 
+    def test_ema_mode_uses_exponential_averages_and_rejects_unknown_methods(self):
+        data = pd.DataFrame({"Close": [10, 12, 9, 14, 11, 17, 15, 20]})
+        backtester = VeyroBacktester()
+        results = backtester.moving_average_strategy(
+            data, fast=2, slow=4, method="EMA"
+        )
+        expected_fast = data["Close"].ewm(
+            span=2, adjust=False, min_periods=2
+        ).mean()
+        self.assertAlmostEqual(results["Fast_MA"].iloc[-1], expected_fast.iloc[-1])
+        with self.assertRaises(ValueError):
+            backtester.moving_average_strategy(data, fast=2, slow=4, method="VWAP")
+
 
 if __name__ == "__main__":
     unittest.main()

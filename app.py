@@ -1,5 +1,6 @@
 
 import json
+import hmac
 import os
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -18,7 +19,25 @@ import streamlit.components.v1 as components
 import yfinance as yf
 
 from modules.backtesting import VeyroBacktester
+from modules.document_tools import EXPORTS, export_document
 from modules.portfolio import calculate_portfolio_analytics
+from modules.screener import apply_screener_filters
+from modules.storage import (
+    add_to_watchlist,
+    get_app_setting,
+    get_holdings as load_persisted_holdings,
+    get_saved_documents,
+    get_watchlist,
+    initialize_storage,
+    normalize_ticker,
+    remove_from_watchlist,
+    remove_holding,
+    save_document,
+    save_holding,
+    set_app_setting,
+)
+from modules.study_inputs import read_study_upload
+from modules.voice_commands import parse_voice_command
 
 # -----------------------------------------
 # NOVA — MARKET INTELLIGENCE
@@ -30,6 +49,44 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed"
 )
+
+access_password = os.environ.get("NOVA_ACCESS_PASSWORD", "").strip()
+try:
+    access_password = access_password or str(
+        st.secrets.get("NOVA_ACCESS_PASSWORD", "")
+    ).strip()
+except (FileNotFoundError, AttributeError):
+    pass
+
+if not access_password:
+    st.error(
+        "NOVA is locked until a private access password is configured. "
+        "Set NOVA_ACCESS_PASSWORD in the server environment or Streamlit secrets."
+    )
+    st.code(
+        "export NOVA_ACCESS_PASSWORD='your-private-password'\n"
+        "streamlit run app.py",
+        language="bash",
+    )
+    st.stop()
+
+if access_password:
+    if not st.session_state.get("nova_authenticated"):
+        st.title("NOVA / SECURE ACCESS")
+        entered_password = st.text_input("Access password", type="password")
+        if st.button("UNLOCK NOVA", type="primary"):
+            if hmac.compare_digest(entered_password, access_password):
+                st.session_state.nova_authenticated = True
+                st.rerun()
+            else:
+                st.error("Access denied.")
+        st.stop()
+
+try:
+    initialize_storage()
+except (OSError, ValueError) as error:
+    st.error(f"Nova's private local storage could not be opened: {error}")
+    st.stop()
 
 voice_component = components.declare_component(
     "nova_voice",
@@ -383,6 +440,106 @@ hr {
     font-size: .62rem;
     letter-spacing: .15em;
 }
+.st-key-nova-nav-console [class*="st-key-nav_"] {
+    display: flex;
+    justify-content: center;
+}
+.st-key-nova-nav-console [class*="st-key-nav_"] button {
+    width: 116px;
+    min-width: 116px;
+    height: 116px;
+    min-height: 116px;
+    padding: 12px;
+    border-radius: 50%;
+    border: 1px solid rgba(66, 215, 255, .72);
+    color: #bff7ff;
+    background:
+        radial-gradient(circle, rgba(28, 102, 143, .34), rgba(3, 14, 23, .95) 72%);
+    box-shadow: inset 0 0 22px rgba(66, 215, 255, .08), 0 0 14px rgba(66, 215, 255, .12);
+    font: 600 .68rem 'IBM Plex Mono', monospace;
+    letter-spacing: .08em;
+    white-space: pre-line;
+    transition: transform .24s ease, box-shadow .24s ease, border-color .24s ease;
+}
+.st-key-nova-nav-console [class*="st-key-nav_"] button:hover {
+    transform: scale(1.06);
+    border-color: #bff7ff;
+    box-shadow: inset 0 0 25px rgba(66, 215, 255, .17), 0 0 25px rgba(66, 215, 255, .3);
+}
+.st-key-nova-nav-console [class*="st-key-nav_"] button[kind="primary"] {
+    color: #031019;
+    border-color: #bff7ff;
+    background: radial-gradient(circle, #71eaff, #1689bb 80%);
+    box-shadow: 0 0 26px rgba(66, 215, 255, .42);
+}
+.nova-nav-reactor {
+    display: grid;
+    min-height: 130px;
+    place-items: center;
+}
+.nova-nav-reactor .nova-reactor {
+    width: 128px;
+    height: 128px;
+}
+.nova-nav-reactor .nova-reactor::before { inset: 9px; }
+.nova-nav-reactor .nova-reactor::after { inset: 24px; }
+.nova-nav-reactor .nova-reactor-core {
+    width: 60px;
+    height: 60px;
+    font-size: .78rem;
+}
+.nova-nav-reactor .nova-reactor-label {
+    font-size: .43rem;
+}
+.nova-nav-reactor .nova-reactor-label.top { top: 4px; }
+.nova-nav-reactor .nova-reactor-label.bottom { bottom: 4px; }
+.nova-radar-display {
+    position: relative;
+    width: min(460px, 100%);
+    aspect-ratio: 1;
+    margin: 18px auto;
+    overflow: hidden;
+    border: 1px solid rgba(66, 215, 255, .55);
+    border-radius: 50%;
+    background:
+        radial-gradient(circle, transparent 0 23%, rgba(66, 215, 255, .45) 23.2%, transparent 23.6% 48%, rgba(66, 215, 255, .4) 48.2%, transparent 48.6% 73%, rgba(66, 215, 255, .35) 73.2%, transparent 73.6%),
+        linear-gradient(90deg, transparent 49.8%, rgba(66, 215, 255, .28) 50%, transparent 50.2%),
+        linear-gradient(transparent 49.8%, rgba(66, 215, 255, .28) 50%, transparent 50.2%),
+        radial-gradient(circle, rgba(5, 37, 46, .95), rgba(2, 9, 15, .96));
+    box-shadow: inset 0 0 32px rgba(66, 215, 255, .12), 0 0 24px rgba(66, 215, 255, .08);
+}
+.nova-radar-display::after {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(from 0deg, transparent 0 300deg, rgba(66, 215, 255, .02) 330deg, rgba(66, 215, 255, .22) 358deg, transparent 360deg);
+    content: "";
+    animation: nova-spin 8s linear infinite;
+}
+.nova-radar-crosshair {
+    position: absolute;
+    inset: 10%;
+    z-index: 1;
+    border: 1px dashed rgba(66, 215, 255, .14);
+    border-radius: 50%;
+    pointer-events: none;
+}
+.nova-radar-point {
+    position: absolute;
+    z-index: 2;
+    display: grid;
+    width: 40px;
+    height: 40px;
+    place-items: center;
+    transform: translate(-50%, -50%);
+    border: 1px solid #9af4ff;
+    border-radius: 50%;
+    color: #d8fdff;
+    background: rgba(5, 30, 43, .9);
+    box-shadow: 0 0 16px rgba(66, 215, 255, .7);
+    font: 600 .55rem 'IBM Plex Mono', monospace;
+    animation: nova-pulse 2.8s ease-in-out infinite;
+}
 .nova-school-note {
     border: 1px solid var(--nova-line);
     border-left: 3px solid var(--nova-cyan);
@@ -448,6 +605,14 @@ hr {
     .nova-reactor {
         width: 190px;
         height: 190px;
+    }
+    .st-key-nova-nav-console [class*="st-key-nav_"] button {
+        width: 88px;
+        min-width: 88px;
+        height: 88px;
+        min-height: 88px;
+        padding: 8px;
+        font-size: .58rem;
     }
 }
 @keyframes nova-spin {
@@ -519,6 +684,13 @@ hr {
 </style>
 """, unsafe_allow_html=True)
 
+if get_app_setting("reduce_motion", "0") == "1":
+    st.markdown(
+        "<style>*,*::before,*::after{animation-duration:.01ms!important;"
+        "animation-iteration-count:1!important;transition-duration:.01ms!important}</style>",
+        unsafe_allow_html=True,
+    )
+
 # -----------------------------------------
 # DATA FUNCTIONS
 # -----------------------------------------
@@ -562,6 +734,210 @@ def get_stock_data(ticker, period="5y"):
     data["AverageVolume20"] = data["Volume"].rolling(20).mean()
 
     return data.dropna(subset=["Close"])
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_market_indices():
+    symbols = {
+        "S&P 500": "^GSPC",
+        "Nasdaq Composite": "^IXIC",
+        "Dow Jones": "^DJI",
+        "Russell 2000": "^RUT",
+    }
+    data = yf.download(
+        list(symbols.values()),
+        period="5d",
+        interval="1d",
+        auto_adjust=False,
+        progress=False,
+        group_by="column",
+        threads=False,
+        timeout=15,
+    )
+    if data.empty:
+        return {}
+    if isinstance(data.columns, pd.MultiIndex):
+        if "Close" in data.columns.get_level_values(0):
+            close = data["Close"]
+        elif "Close" in data.columns.get_level_values(1):
+            close = data.xs("Close", axis=1, level=1)
+        else:
+            return {}
+    elif "Close" in data:
+        close = data[["Close"]].rename(columns={"Close": symbols["S&P 500"]})
+    else:
+        return {}
+    if isinstance(close, pd.Series):
+        close = close.to_frame()
+    snapshot = {}
+    for label, ticker in symbols.items():
+        if ticker not in close:
+            continue
+        prices = close[ticker].dropna()
+        if prices.empty:
+            continue
+        previous = float(prices.iloc[-2]) if len(prices) > 1 else None
+        latest = float(prices.iloc[-1])
+        snapshot[label] = {
+            "ticker": ticker,
+            "price": latest,
+            "change_pct": (
+                (latest / previous - 1) * 100
+                if previous is not None and previous else None
+            ),
+            "as_of": pd.Timestamp(prices.index[-1]),
+        }
+    return snapshot
+
+
+def get_us_market_schedule_status():
+    current = datetime.now(ZoneInfo("America/New_York"))
+    minute_of_day = current.hour * 60 + current.minute
+    if current.weekday() >= 5:
+        return "CLOSED", current
+    if 9 * 60 + 30 <= minute_of_day < 16 * 60:
+        return "REGULAR HOURS", current
+    if 4 * 60 <= minute_of_day < 9 * 60 + 30:
+        return "PRE-MARKET", current
+    if 16 * 60 <= minute_of_day < 20 * 60:
+        return "AFTER-HOURS", current
+    return "CLOSED", current
+
+
+@st.cache_data(ttl=300)
+def get_chart_data(ticker, period):
+    range_settings = {
+        "1d": ("1d", "5m"),
+        "1w": ("5d", "15m"),
+        "1mo": ("1mo", "1d"),
+        "3mo": ("3mo", "1d"),
+        "6mo": ("6mo", "1d"),
+        "1y": ("1y", "1d"),
+        "5y": ("5y", "1d"),
+    }
+    data_period, interval = range_settings[period]
+    data = yf.download(
+        ticker,
+        period=data_period,
+        interval=interval,
+        auto_adjust=True,
+        progress=False,
+        timeout=15,
+    )
+    if isinstance(data.columns, pd.MultiIndex):
+        data.columns = data.columns.get_level_values(0)
+    if data.empty or "Close" not in data:
+        return pd.DataFrame()
+    data["SMA20"] = data["Close"].rolling(20).mean()
+    data["SMA50"] = data["Close"].rolling(50).mean()
+    data["SMA200"] = data["Close"].rolling(200).mean()
+    data["EMA20"] = data["Close"].ewm(span=20, adjust=False).mean()
+    data["BB_Middle"] = data["Close"].rolling(20).mean()
+    data["BB_Std"] = data["Close"].rolling(20).std()
+    data["BB_Upper"] = data["BB_Middle"] + 2 * data["BB_Std"]
+    data["BB_Lower"] = data["BB_Middle"] - 2 * data["BB_Std"]
+    data["MACD"] = data["Close"].ewm(span=12, adjust=False).mean() - data["Close"].ewm(span=26, adjust=False).mean()
+    data["MACD_Signal"] = data["MACD"].ewm(span=9, adjust=False).mean()
+    data["MACD_Histogram"] = data["MACD"] - data["MACD_Signal"]
+    delta = data["Close"].diff()
+    average_gain = delta.clip(lower=0).rolling(14).mean()
+    average_loss = -delta.clip(upper=0).rolling(14).mean()
+    relative_strength = average_gain / average_loss.replace(0, np.nan)
+    data["RSI14"] = 100 - (100 / (1 + relative_strength))
+    data["AverageVolume20"] = data["Volume"].rolling(20).mean()
+    return data.dropna(subset=["Close"])
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_company_fundamentals(ticker):
+    try:
+        info = yf.Ticker(ticker).get_info()
+    except Exception:
+        return {}
+    if not isinstance(info, dict):
+        return {}
+    return {
+        "Company": info.get("longName") or info.get("shortName"),
+        "Market capitalization": info.get("marketCap"),
+        "Trailing P/E": info.get("trailingPE"),
+        "Forward P/E": info.get("forwardPE"),
+        "EPS (TTM)": info.get("trailingEps"),
+        "EPS growth": info.get("earningsGrowth"),
+        "Revenue (TTM)": info.get("totalRevenue"),
+        "Revenue growth": info.get("revenueGrowth"),
+        "Profit margin": info.get("profitMargins"),
+        "Debt / equity": info.get("debtToEquity"),
+        "Return on equity": info.get("returnOnEquity"),
+        "Return on assets": info.get("returnOnAssets"),
+        "Dividend yield": info.get("dividendYield"),
+        "Analyst target (mean)": info.get("targetMeanPrice"),
+        "52-week high": info.get("fiftyTwoWeekHigh"),
+        "52-week low": info.get("fiftyTwoWeekLow"),
+        "Sector": info.get("sector"),
+        "Industry": info.get("industry"),
+    }
+
+
+SCREENER_FILTER_COUNT = 13
+SCREENER_CONFIG_KEYS = [
+    "screener_universe",
+    "screener_min_price",
+    "screener_min_avg_volume",
+    "screener_min_dollar_volume",
+    "screener_rsi_range",
+    "screener_min_one_month_return",
+    "screener_min_three_month_return",
+    "screener_max_volatility",
+    "screener_min_relative_volume",
+    "screener_max_atr",
+    "screener_require_sma20",
+    "screener_require_sma50",
+    "screener_require_sma200",
+    "screener_require_macd",
+    "screener_limit_beta",
+    "screener_beta_range",
+    "screener_sort_by",
+    "screener_ascending",
+    "screener_sector",
+    "screener_industry",
+]
+for _filter_index in range(SCREENER_FILTER_COUNT):
+    SCREENER_CONFIG_KEYS.extend([
+        f"screener_filter_{_filter_index}_field",
+        f"screener_filter_{_filter_index}_operator",
+        f"screener_filter_{_filter_index}_lower",
+        f"screener_filter_{_filter_index}_upper",
+    ])
+
+SCREENER_CONFIG_DEFAULTS = {
+    "screener_universe": "NVDA, AAPL, MSFT, AMZN, GOOGL, META, TSLA, AMD, ORCL, PLTR",
+    "screener_min_price": 0.0,
+    "screener_min_avg_volume": 0,
+    "screener_min_dollar_volume": 0,
+    "screener_rsi_range": (0, 100),
+    "screener_min_one_month_return": -100.0,
+    "screener_min_three_month_return": -100.0,
+    "screener_max_volatility": 200.0,
+    "screener_min_relative_volume": 0.0,
+    "screener_max_atr": 100.0,
+    "screener_require_sma20": False,
+    "screener_require_sma50": False,
+    "screener_require_sma200": False,
+    "screener_require_macd": False,
+    "screener_limit_beta": False,
+    "screener_beta_range": (0.0, 2.0),
+    "screener_sort_by": "3M (%)",
+    "screener_ascending": False,
+    "screener_sector": "",
+    "screener_industry": "",
+}
+for _filter_index in range(SCREENER_FILTER_COUNT):
+    SCREENER_CONFIG_DEFAULTS.update({
+        f"screener_filter_{_filter_index}_field": "— Off —",
+        f"screener_filter_{_filter_index}_operator": "≥",
+        f"screener_filter_{_filter_index}_lower": 0.0,
+        f"screener_filter_{_filter_index}_upper": 100.0,
+    })
 
 
 @st.cache_data(ttl=300)
@@ -641,8 +1017,8 @@ def discover_stock(query):
 
         return exact[0] if exact else equities[0]
 
-    except Exception:
-        return None
+    except Exception as error:
+        raise RuntimeError(f"Yahoo Finance asset search failed: {error}") from error
 
 
 def calculate_metrics(data):
@@ -861,9 +1237,34 @@ def screen_ticker(ticker, benchmark_returns=None):
         float(paired_returns["asset"].cov(paired_returns["benchmark"]) / benchmark_variance)
         if benchmark_variance > 0 else np.nan
     )
+    fundamentals = get_company_fundamentals(ticker)
+    profile_checked_at = datetime.now().astimezone().isoformat(timespec="seconds")
+
+    def numeric_fundamental(name, scale=1):
+        value = fundamentals.get(name)
+        try:
+            value = float(value) * scale
+        except (TypeError, ValueError):
+            return np.nan
+        return value if np.isfinite(value) else np.nan
+
     return {
         "Ticker": ticker,
+        "Price data as of": pd.Timestamp(data.index[-1]).isoformat(),
+        "Profile checked at": profile_checked_at,
         "Price ($)": metrics["Latest Price"],
+        "Market Cap ($B)": numeric_fundamental("Market capitalization", 1e-9),
+        "P/E": numeric_fundamental("Trailing P/E"),
+        "Forward P/E": numeric_fundamental("Forward P/E"),
+        "EPS growth (%)": numeric_fundamental("EPS growth", 100),
+        "Revenue growth (%)": numeric_fundamental("Revenue growth", 100),
+        "Dividend yield (%)": numeric_fundamental("Dividend yield", 100),
+        "Debt / equity (%)": numeric_fundamental("Debt / equity"),
+        "Profit margin (%)": numeric_fundamental("Profit margin", 100),
+        "Return on equity (%)": numeric_fundamental("Return on equity", 100),
+        "Return on assets (%)": numeric_fundamental("Return on assets", 100),
+        "Sector": fundamentals.get("Sector") or "Unavailable",
+        "Industry": fundamentals.get("Industry") or "Unavailable",
         "Day (%)": metrics["Daily Change"],
         "1M (%)": metrics["1M Return"],
         "3M (%)": float((close.iloc[-1] / close.iloc[-64] - 1) * 100) if len(close) >= 64 else np.nan,
@@ -893,18 +1294,35 @@ def screen_ticker(ticker, benchmark_returns=None):
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def get_naperville_weather():
-    url = (
-        "https://api.open-meteo.com/v1/forecast?"
-        "latitude=41.7508&longitude=-88.1535"
+def get_weather_for_location(location):
+    cleaned_location = str(location).strip()
+    if not cleaned_location:
+        raise ValueError("Enter a location before requesting weather.")
+    geocoding_url = (
+        "https://geocoding-api.open-meteo.com/v1/search?name="
+        f"{quote(cleaned_location)}&count=1&language=en&format=json"
+    )
+    with urlopen(geocoding_url, timeout=5) as response:
+        geocoding = json.loads(response.read().decode("utf-8"))
+    places = geocoding.get("results") or []
+    if not places:
+        raise ValueError(f"No weather location matched “{cleaned_location}”.")
+    place = places[0]
+    query = (
+        "latitude={latitude}&longitude={longitude}"
         "&current=temperature_2m,relative_humidity_2m,apparent_temperature,"
         "precipitation,weather_code,wind_speed_10m"
         "&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset"
         "&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch"
-        "&timezone=America%2FChicago&forecast_days=5"
+        "&timezone=auto&forecast_days=5"
+    ).format(latitude=place["latitude"], longitude=place["longitude"])
+    with urlopen(f"https://api.open-meteo.com/v1/forecast?{query}", timeout=5) as response:
+        weather = json.loads(response.read().decode("utf-8"))
+    weather["resolved_location"] = ", ".join(
+        part for part in (place.get("name"), place.get("admin1"), place.get("country"))
+        if part
     )
-    with urlopen(url, timeout=3) as response:
-        return json.loads(response.read().decode("utf-8"))
+    return weather
 
 
 def describe_weather_code(code):
@@ -1014,7 +1432,9 @@ def get_study_ai_settings():
     return api_key, model
 
 
-def request_study_tutor(messages, subject, help_mode, model, api_key):
+def request_study_tutor(
+    messages, subject, help_mode, model, api_key, image_data_uri=None
+):
     tutor_guidance = (
         "You are NOVA Study Studio, a supportive tutor. Help the student learn "
         "through clear explanations, hints, worked examples on analogous "
@@ -1023,6 +1443,18 @@ def request_study_tutor(messages, subject, help_mode, model, api_key):
         "active exam. Ask a focused follow-up when the request lacks context. "
         "Be transparent about uncertainty and distinguish facts from guesses."
     )
+    request_messages = list(messages)
+    if image_data_uri and request_messages:
+        last_message = dict(request_messages[-1])
+        prompt_text = str(last_message.get("content", ""))
+        last_message["content"] = [
+            {"type": "text", "text": prompt_text},
+            {
+                "type": "image_url",
+                "image_url": {"url": image_data_uri},
+            },
+        ]
+        request_messages[-1] = last_message
     payload = {
         "model": model,
         "messages": [
@@ -1033,7 +1465,7 @@ def request_study_tutor(messages, subject, help_mode, model, api_key):
                     f"Requested help mode: {help_mode}."
                 )
             },
-            *messages
+            *request_messages
         ],
         "temperature": 0.4
     }
@@ -1062,34 +1494,64 @@ def request_study_tutor(messages, subject, help_mode, model, api_key):
 
 @st.fragment(run_every="60s")
 def render_naperville_context():
-    local_now = datetime.now(ZoneInfo("America/Chicago"))
     weather_col, clock_col = st.columns([1.5, 1])
     with clock_col:
         st.markdown(
-            '<div class="nova-small">LOCAL SYSTEM TIME // NAPERVILLE, IL</div>'
-            f'<div class="nova-time">{local_now.strftime("%I:%M:%S %p")}</div>'
-            f'<div class="nova-small">{local_now.strftime("%A • %B %d, %Y")} / {local_now.tzname()}</div>',
+            '<div class="nova-small">LIVE LOCAL SYSTEM TIME // YOUR TIMEZONE</div>',
             unsafe_allow_html=True
+        )
+        components.html(
+            """<div style="font:700 2rem Rajdhani,sans-serif;color:#42d7ff;line-height:1.05"
+                         id="nova-clock-time"></div>
+               <div style="font:600 .68rem 'IBM Plex Mono',monospace;color:#8ea8c2"
+                    id="nova-clock-date"></div>
+               <script>
+                 const timeNode = document.getElementById("nova-clock-time");
+                 const dateNode = document.getElementById("nova-clock-date");
+                 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "local";
+                 function updateNovaClock() {
+                   const now = new Date();
+                   timeNode.textContent = new Intl.DateTimeFormat(undefined, {
+                     hour: "2-digit", minute: "2-digit", second: "2-digit",
+                     hour12: true
+                   }).format(now);
+                   dateNode.textContent = new Intl.DateTimeFormat(undefined, {
+                     weekday: "long", month: "long", day: "2-digit", year: "numeric"
+                   }).format(now) + " / " + timezone;
+                 }
+                 updateNovaClock();
+                 window.setInterval(updateNovaClock, 1000);
+               </script>""",
+            height=72,
+            scrolling=False
         )
     with weather_col:
+        location = st.session_state.get("weather_location", "Naperville, Illinois")
+        weather = st.session_state.get("weather_data")
+        if st.session_state.get("weather_loaded_location") != location:
+            weather = None
         st.markdown(
-            '<div class="nova-small">LIVE CONDITIONS // NAPERVILLE, ILLINOIS</div>',
+            f'<div class="nova-small">LIVE CONDITIONS // {escape(location.upper())}</div>',
             unsafe_allow_html=True
         )
-        weather = st.session_state.get("naperville_weather")
         button_label = "REFRESH LOCAL WEATHER" if weather else "LOAD LOCAL WEATHER"
         if st.button(button_label, key="load_naperville_weather"):
             try:
-                get_naperville_weather.clear()
+                get_weather_for_location.clear()
                 with st.spinner("CONNECTING TO WEATHER FEED..."):
-                    weather = get_naperville_weather()
-                st.session_state.naperville_weather = weather
-            except (OSError, TimeoutError, ValueError, KeyError) as error:
+                    weather = get_weather_for_location(location)
+                st.session_state.weather_data = weather
+                st.session_state.weather_loaded_location = location
+                st.session_state.weather_error = ""
+            except Exception as error:
+                st.session_state.weather_error = str(error)
                 st.warning(
-                    f"Naperville weather is temporarily unavailable ({error}). "
+                    f"Weather is temporarily unavailable ({error}). "
                     "The local clock remains active."
                 )
-        weather = st.session_state.get("naperville_weather")
+        weather = st.session_state.get("weather_data")
+        if st.session_state.get("weather_loaded_location") != location:
+            weather = None
         if weather:
             try:
                 current = weather["current"]
@@ -1097,6 +1559,10 @@ def render_naperville_context():
                     f'<span class="nova-weather-temp">{current["temperature_2m"]:.0f}°F</span>'
                     f' &nbsp; {describe_weather_code(current["weather_code"])}',
                     unsafe_allow_html=True
+                )
+                st.caption(
+                    f"Open-Meteo current conditions • feed time {current.get('time', 'unavailable')} "
+                    f"{weather.get('timezone', 'local provider timezone')}"
                 )
                 metrics = st.columns(4)
                 metrics[0].markdown(
@@ -1129,11 +1595,16 @@ def render_naperville_context():
                 )
             except (ValueError, KeyError) as error:
                 st.warning(
-                    f"Naperville weather response was incomplete ({error}). "
+                    f"Weather response was incomplete ({error}). "
                     "The local clock remains active."
                 )
         else:
-            st.caption("Weather loads on request; the local clock is active.")
+            weather_error = st.session_state.get("weather_error")
+            st.caption(
+                f"Weather unavailable: {weather_error}"
+                if weather_error else
+                "Weather loads on request; the local clock is active."
+            )
 
 
 # -----------------------------------------
@@ -1145,6 +1616,16 @@ if "portfolio" not in st.session_state:
 
 if "radar" not in st.session_state:
     st.session_state.radar = []
+
+persisted_holdings = load_persisted_holdings()
+if "weather_location" not in st.session_state:
+    st.session_state.weather_location = get_app_setting(
+        "weather_location", "Naperville, Illinois"
+    )
+st.session_state.portfolio = {
+    ticker: holding["shares"] for ticker, holding in persisted_holdings.items()
+}
+st.session_state.radar = get_watchlist()
 
 if "asset_command" not in st.session_state:
     st.session_state.asset_command = ""
@@ -1158,14 +1639,14 @@ if "active_page" not in st.session_state:
     st.session_state.active_page = "Command Center"
 
 pages = [
-    ("Command Center", "01 / COMMAND"),
-    ("Stock Intelligence", "02 / STOCKS"),
-    ("Market Screener", "03 / SCREENER"),
-    ("Backtesting Lab", "04 / BACKTEST"),
-    ("Galaxy Radar", "05 / RADAR"),
-    ("Portfolio Analytics", "06 / PORTFOLIO"),
-    ("Study Studio", "07 / STUDY"),
-    ("System Information", "08 / SYSTEM")
+    ("Command Center", "⌂\nCOMMAND"),
+    ("Stock Intelligence", "◉\nSTOCKS"),
+    ("Market Screener", "▤\nSCREENER"),
+    ("Backtesting Lab", "↗\nBACKTEST"),
+    ("Galaxy Radar", "◎\nRADAR"),
+    ("Portfolio Analytics", "◈\nPORTFOLIO"),
+    ("Study Studio", "✎\nSTUDY"),
+    ("System Information", "⚙\nSYSTEM")
 ]
 if st.session_state.active_page not in {page_name for page_name, _ in pages}:
     st.session_state.active_page = "Command Center"
@@ -1200,54 +1681,25 @@ transcript = voice_result.get("transcript", "")
 voice_notice = ""
 if transcript and transcript != st.session_state.get("last_voice_transcript"):
     st.session_state.last_voice_transcript = transcript
-    command = " ".join(transcript.strip().lower().split())
-    destinations = {
-        "command center": "Command Center",
-        "home": "Command Center",
-        "go home": "Command Center",
-        "dashboard": "Command Center",
-        "stock intelligence": "Stock Intelligence",
-        "stock analysis": "Stock Intelligence",
-        "market screener": "Market Screener",
-        "screener": "Market Screener",
-        "backtesting": "Backtesting Lab",
-        "backtesting lab": "Backtesting Lab",
-        "strategy research": "Backtesting Lab",
-        "strategy lab": "Backtesting Lab",
-        "galaxy radar": "Galaxy Radar",
-        "radar": "Galaxy Radar",
-        "portfolio": "Portfolio Analytics",
-        "portfolio analytics": "Portfolio Analytics",
-        "study": "Study Studio",
-        "study studio": "Study Studio",
-        "study assistant": "Study Studio",
-        "tutor": "Study Studio",
-        "system information": "System Information"
-    }
-    destination = next(
-        (
-            page_name
-            for phrase, page_name in destinations.items()
-            if command in {
-                phrase,
-                f"open {phrase}",
-                f"go to {phrase}",
-                f"show {phrase}",
-                f"navigate to {phrase}"
-            }
-        ),
-        None
+    action, value = parse_voice_command(
+        transcript, st.session_state.active_page
     )
-    if destination:
-        st.session_state.active_page = destination
-        voice_notice = f"Voice command opened {destination}."
-    elif st.session_state.active_page == "Study Studio":
-        st.session_state.study_prompt = transcript
+    if action == "navigate":
+        st.session_state.active_page = value
+        voice_notice = f"Voice command opened {value}."
+    elif action == "research":
+        st.session_state.active_page = "Stock Intelligence"
+        st.session_state.stock_search_query = value.upper()
+        st.session_state.stock_analysis = None
+        st.session_state.voice_research_pending = True
+        voice_notice = f"Research request opened for {value.upper()}."
+    elif action == "study":
+        st.session_state.study_prompt = value
         voice_notice = "Voice question captured for Study Studio."
     else:
         st.session_state.active_page = "Command Center"
-        st.session_state.asset_command = transcript
-        voice_notice = f"Voice input captured: “{transcript}”"
+        st.session_state.asset_command = value
+        voice_notice = f"Voice input captured: “{value}”"
 
 # -----------------------------------------
 # CONTROL-DECK NAVIGATION
@@ -1261,20 +1713,34 @@ if voice_result.get("status") == "error":
 elif voice_notice:
     st.caption(voice_notice)
 
-st.markdown('<div class="nova-nav-label">NAVIGATION / SELECT A SYSTEM</div>', unsafe_allow_html=True)
-for row_start in range(0, len(pages), 4):
-    nav_columns = st.columns(4)
-    for column, (destination, label) in zip(
-        nav_columns, pages[row_start:row_start + 4]
-    ):
-        if column.button(
-            label,
-            key=f"nav_{destination.lower().replace(' ', '_')}",
-            type="primary" if st.session_state.active_page == destination else "secondary",
-            use_container_width=True
-        ):
-            st.session_state.active_page = destination
-            st.rerun()
+with st.container(key="nova-nav-console"):
+    st.markdown(
+        '<div class="nova-nav-label">HOLOGRAPHIC SYSTEM CONTROLS / SELECT A MODULE</div>',
+        unsafe_allow_html=True
+    )
+    nav_positions = [[0, 1, 2], [3, None, 4], [5, 6, 7]]
+    for row in nav_positions:
+        nav_columns = st.columns(3)
+        for column, page_index in zip(nav_columns, row):
+            if page_index is None:
+                column.markdown(
+                    '<div class="nova-nav-reactor"><div class="nova-reactor">'
+                    '<div class="nova-reactor-label top">NOVA / ONLINE</div>'
+                    '<div class="nova-reactor-core">NOVA</div>'
+                    '<div class="nova-reactor-label bottom">SYSTEM / READY</div>'
+                    '</div></div>',
+                    unsafe_allow_html=True
+                )
+                continue
+            destination, label = pages[page_index]
+            if column.button(
+                label,
+                key=f"nav_{destination.lower().replace(' ', '_')}",
+                type="primary" if st.session_state.active_page == destination else "secondary",
+                use_container_width=False
+            ):
+                st.session_state.active_page = destination
+                st.rerun()
 
 page = st.session_state.active_page
 
@@ -1286,18 +1752,16 @@ if page == "Command Center":
 
     st.markdown('<p class="nova-eyebrow">NOVA // MARKET INTELLIGENCE SYSTEM</p>', unsafe_allow_html=True)
     st.title("NOVA / Command Center")
-    local_now = datetime.now(ZoneInfo("America/Chicago"))
     st.markdown(
         '<div class="nova-terminal-bar">'
         '<span>TERMINAL / MARKET RESEARCH</span>'
-        f'<span><strong>{local_now.strftime("%A / %b %d, %Y")}</strong>'
-        f' &nbsp; // &nbsp; {local_now.strftime("%I:%M %p %Z")}</span>'
+        '<span><strong>LOCAL TIME / BROWSER CLOCK</strong></span>'
         '</div>',
         unsafe_allow_html=True
     )
     st.markdown(
-        '<div class="nova-hud-strip">SYSTEM ONLINE &nbsp; / &nbsp; '
-        'MARKET DATA LINK &nbsp; / &nbsp; RESEARCH MODE &nbsp; / &nbsp; '
+        '<div class="nova-hud-strip">NOVA ONLINE &nbsp; / &nbsp; '
+        'YAHOO FINANCE DATA / ON DEMAND &nbsp; / &nbsp; RESEARCH MODE &nbsp; / &nbsp; '
         'NO TRADE EXECUTION</div>',
         unsafe_allow_html=True
     )
@@ -1307,6 +1771,45 @@ if page == "Command Center":
 
     render_naperville_context()
 
+    st.subheader("Market Pulse / Major Indices")
+    if st.button("REFRESH MARKET INDEX DATA", key="refresh_market_indices"):
+        get_market_indices.clear()
+    try:
+        market_snapshot = get_market_indices()
+    except Exception as error:
+        market_snapshot = {}
+        st.warning(f"Yahoo Finance index data is unavailable: {error}")
+    if market_snapshot:
+        index_columns = st.columns(4)
+        for column, (label, quote) in zip(index_columns, market_snapshot.items()):
+            column.metric(
+                label,
+                f'{quote["price"]:,.2f}',
+                (
+                    f'{quote["change_pct"]:+.2f}%'
+                    if quote["change_pct"] is not None else None
+                ),
+            )
+        latest_index_time = max(
+            quote["as_of"] for quote in market_snapshot.values()
+        )
+        st.caption(
+            f"Yahoo Finance • last daily index data: {latest_index_time} • "
+            "values may be delayed and are not an intraday feed."
+        )
+    else:
+        st.info("Market index data has not been returned by the provider.")
+
+    schedule_status, schedule_time = get_us_market_schedule_status()
+    st.markdown(
+        f'<div class="nova-hud-strip">US EQUITY SCHEDULE / {schedule_status} '
+        f'&nbsp; / &nbsp; {schedule_time.strftime("%I:%M %p %Z")}</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Schedule estimate uses weekday US market hours; exchange holidays and special sessions may differ."
+    )
+
     st.markdown("### SYSTEM STATUS")
 
     col1, col2, col3, col4 = st.columns(4)
@@ -1314,7 +1817,7 @@ if page == "Command Center":
     col1.metric("Research Modules", str(len(pages)))
     col2.metric("Portfolio Assets", len(st.session_state.portfolio))
     col3.metric("Radar Assets", len(st.session_state.radar))
-    col4.metric("System Mode", "Research")
+    col4.metric("Market Data Link", "AVAILABLE" if market_snapshot else "UNAVAILABLE")
 
     portfolio_symbols = ", ".join(
         escape(symbol) for symbol in st.session_state.portfolio
@@ -1377,22 +1880,25 @@ if page == "Command Center":
 
     if st.button("RESOLVE ASSET", use_container_width=True):
         if command:
-            match = discover_stock(command)
-
-            if match:
-                st.session_state.selected_ticker = match["symbol"]
-                st.session_state.selected_name = (
-                    match.get("longname")
-                    or match.get("shortname")
-                    or match["symbol"]
-                )
-                st.success(
-                    f"Resolved: {st.session_state.selected_name} "
-                    f"({match['symbol']})"
-                )
-                st.info("Open Stock Intelligence to inspect the asset.")
+            try:
+                match = discover_stock(command)
+            except RuntimeError as error:
+                st.error(str(error))
             else:
-                st.error("No matching listed stock or ETF was found.")
+                if match:
+                    st.session_state.selected_ticker = match["symbol"]
+                    st.session_state.selected_name = (
+                        match.get("longname")
+                        or match.get("shortname")
+                        or match["symbol"]
+                    )
+                    st.success(
+                        f"Resolved: {st.session_state.selected_name} "
+                        f"({match['symbol']})"
+                    )
+                    st.info("Open Stock Intelligence to inspect the asset.")
+                else:
+                    st.error("No matching listed stock or ETF was found.")
 
     st.divider()
 
@@ -1404,6 +1910,37 @@ if page == "Command Center":
     ])
 
     st.dataframe(portfolio_table, use_container_width=True, hide_index=True)
+    if st.button("LOAD HOLDINGS / RADAR MOVERS", key="load_watchlist_movers"):
+        mover_rows = []
+        for symbol in dict.fromkeys(
+            [*st.session_state.portfolio, *st.session_state.radar]
+        ):
+            try:
+                history = get_stock_data(symbol, "5d")
+                if len(history) > 1:
+                    prior = float(history["Close"].iloc[-2])
+                    latest = float(history["Close"].iloc[-1])
+                    mover_rows.append({
+                        "Ticker": symbol,
+                        "Latest Price": latest,
+                        "Change (%)": (latest / prior - 1) * 100 if prior else np.nan,
+                        "Last Updated": str(history.index[-1]),
+                    })
+            except Exception:
+                continue
+        st.session_state.command_movers = mover_rows
+    movers = st.session_state.get("command_movers", [])
+    if movers:
+        st.dataframe(
+            pd.DataFrame(movers).sort_values("Change (%)", ascending=False),
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Latest Price": st.column_config.NumberColumn(format="$%.2f"),
+                "Change (%)": st.column_config.NumberColumn(format="%.2f%%"),
+            },
+        )
+        st.caption("Movers are limited to your saved holdings and radar assets; data source is Yahoo Finance.")
     st.divider()
     st.subheader("Live Intelligence Feeds")
     if st.button(
@@ -1435,96 +1972,144 @@ elif page == "Stock Intelligence":
     st.title("Stock Intelligence")
     st.caption("PRICE ACTION / TREND / MOMENTUM / RISK")
 
-    default_ticker = st.session_state.get("selected_ticker", "NVDA")
-
-    query = st.text_input(
-        "Company name or ticker",
-        value=default_ticker
-    )
-
+    if "stock_search_query" not in st.session_state:
+        st.session_state.stock_search_query = st.session_state.get(
+            "selected_ticker", "NVDA"
+        )
+    query = st.text_input("Company name or ticker", key="stock_search_query")
     period = st.selectbox(
-        "Historical period",
-        ["1y", "2y", "5y", "10y"],
-        index=2
+        "Chart period",
+        ["1d", "1w", "1mo", "3mo", "6mo", "1y", "5y"],
+        index=5,
+        key="stock_chart_period",
     )
 
-    if st.button("ANALYZE ASSET", use_container_width=True):
-
-        match = discover_stock(query)
-
-        if match:
-            ticker = match["symbol"]
-            st.session_state.selected_ticker = ticker
-
-            data = get_stock_data(ticker, period)
-
-            if not data.empty:
-                metrics = calculate_metrics(data)
-
-                st.success(
-                    f"{match.get('longname') or match.get('shortname')} "
-                    f"({ticker})"
-                )
-
-                a, b, c = st.columns(3)
-                a.metric("Latest Available Price", f"${metrics['Latest Price']:,.2f}")
-                b.metric("Selected-Period Return", f"{metrics['Total Return']:.2f}%")
-                c.metric("Annualized Return (CAGR)", f"{metrics['CAGR']:.2f}%")
-
-                d, e, f = st.columns(3)
-                d.metric("Day Change", f"{metrics['Daily Change']:.2f}%")
-                e.metric("1-Month Return", f"{metrics['1M Return']:.2f}%")
-                f.metric("RSI (14)", f"{metrics['RSI (14)']:.1f}")
-
-                g, h, i = st.columns(3)
-                g.metric("Annualized Volatility", f"{metrics['Volatility']:.2f}%")
-                h.metric("Sharpe Ratio", f"{metrics['Sharpe']:.2f}")
-                i.metric("Sortino Ratio", f"{metrics['Sortino']:.2f}")
-
-                j, k, l = st.columns(3)
-                j.metric("Maximum Drawdown", f"{metrics['Max Drawdown']:.2f}%")
-                k.metric("52-Week Range", f"${metrics['52W Low']:,.2f} – ${metrics['52W High']:,.2f}")
-                l.metric("From 52-Week High", f"{metrics['From 52W High']:.2f}%")
-
-                indicators = st.columns(4)
-                latest = data.iloc[-1]
-                indicators[0].metric("EMA (20)", f"${latest['EMA20']:,.2f}")
-                indicators[1].metric("SMA (50)", f"${latest['SMA50']:,.2f}")
-                indicators[2].metric("SMA (200)", f"${latest['SMA200']:,.2f}")
-                indicators[3].metric("MACD", f"{latest['MACD']:.3f}")
-
-                st.plotly_chart(
-                    price_chart(data, ticker),
-                    use_container_width=True
-                )
-                st.plotly_chart(
-                    momentum_chart(data, ticker),
-                    use_container_width=True
-                )
-                st.plotly_chart(
-                    volume_chart(data, ticker),
-                    use_container_width=True
-                )
-
-                st.caption(
-                    f"Average daily volume (20 sessions): "
-                    f"{metrics['Average Volume (20D)']:,.0f} shares."
-                )
-
-                st.caption(
-                    f"Last data point: {data.index[-1].date()}. "
-                    "Historical measurements are not predictions."
-                )
-
-                if st.button("ADD TO GALAXY RADAR"):
-                    if ticker not in st.session_state.radar:
-                        st.session_state.radar.append(ticker)
-                    st.success(f"{ticker} added to radar.")
-
-            else:
-                st.error("No usable historical price data returned.")
+    voice_research_pending = bool(
+        st.session_state.pop("voice_research_pending", False)
+    )
+    if st.button("ANALYZE ASSET", use_container_width=True) or voice_research_pending:
+        st.session_state.stock_analysis = None
+        if not query.strip():
+            st.warning("Enter a company name or ticker.")
         else:
-            st.error("Could not identify that stock. Try its ticker symbol.")
+            try:
+                match = discover_stock(query)
+                if match:
+                    st.session_state.stock_analysis = {
+                        "query": query.strip().casefold(),
+                        "ticker": match["symbol"],
+                        "name": match.get("longname") or match.get("shortname") or match["symbol"],
+                    }
+                    st.session_state.selected_ticker = match["symbol"]
+                else:
+                    st.error("Could not identify that stock. Try its ticker symbol.")
+            except Exception as error:
+                st.error(f"Asset lookup failed: {error}")
+
+    analysis = st.session_state.get("stock_analysis")
+    if analysis and analysis["query"] == query.strip().casefold():
+        ticker = analysis["ticker"]
+        try:
+            data = get_stock_data(ticker, "1y")
+            chart_data = get_chart_data(ticker, period)
+        except Exception as error:
+            data, chart_data = pd.DataFrame(), pd.DataFrame()
+            st.error(f"Market data request failed: {error}")
+
+        if data.empty:
+            st.error("No usable historical price data was returned by Yahoo Finance.")
+        else:
+            metrics = calculate_metrics(data)
+            st.success(f"{analysis['name']} ({ticker})")
+            a, b, c = st.columns(3)
+            a.metric("Latest Available Price", f"${metrics['Latest Price']:,.2f}")
+            b.metric("1-Year Historical Return", f"{metrics['Total Return']:.2f}%")
+            c.metric("Annualized Return (CAGR)", f"{metrics['CAGR']:.2f}%")
+
+            d, e, f = st.columns(3)
+            d.metric("Day Change", f"{metrics['Daily Change']:.2f}%")
+            e.metric("1-Month Return", f"{metrics['1M Return']:.2f}%")
+            f.metric("RSI (14)", f"{metrics['RSI (14)']:.1f}")
+
+            g, h, i = st.columns(3)
+            g.metric("Annualized Volatility", f"{metrics['Volatility']:.2f}%")
+            h.metric("Sharpe Ratio", f"{metrics['Sharpe']:.2f}")
+            i.metric("Sortino Ratio", f"{metrics['Sortino']:.2f}")
+
+            j, k, l = st.columns(3)
+            j.metric("Maximum Drawdown", f"{metrics['Max Drawdown']:.2f}%")
+            j.caption("Calculated from the last year of available data.")
+            k.metric("52-Week Range", f"${metrics['52W Low']:,.2f} – ${metrics['52W High']:,.2f}")
+            l.metric("From 52-Week High", f"{metrics['From 52W High']:.2f}%")
+
+            latest = data.iloc[-1]
+            indicators = st.columns(4)
+            indicators[0].metric("EMA (20)", f"${latest['EMA20']:,.2f}")
+            indicators[1].metric("SMA (50)", f"${latest['SMA50']:,.2f}")
+            indicators[2].metric("SMA (200)", f"${latest['SMA200']:,.2f}")
+            indicators[3].metric("MACD", f"{latest['MACD']:.3f}")
+
+            if not chart_data.empty:
+                st.plotly_chart(price_chart(chart_data, ticker), use_container_width=True)
+                st.plotly_chart(momentum_chart(chart_data, ticker), use_container_width=True)
+                if "Volume" in chart_data:
+                    st.plotly_chart(volume_chart(chart_data, ticker), use_container_width=True)
+                st.caption(
+                    f"Chart period: {period} • Yahoo Finance • latest point "
+                    f"{chart_data.index[-1]} (provider timestamps may be delayed)."
+                )
+            else:
+                st.info(f"Yahoo Finance did not return chart data for the selected {period} period.")
+
+            fundamental_col, radar_col = st.columns([1.3, 1])
+            with fundamental_col:
+                st.subheader("Company Fundamentals")
+                if st.button("LOAD AVAILABLE FUNDAMENTALS", key="load_fundamentals"):
+                    try:
+                        st.session_state.fundamental_data = get_company_fundamentals(ticker)
+                        st.session_state.fundamental_ticker = ticker
+                        st.session_state.fundamental_loaded_at = datetime.now().astimezone().isoformat(timespec="seconds")
+                    except Exception as error:
+                        st.session_state.fundamental_data = {}
+                        st.warning(f"Fundamentals are unavailable: {error}")
+                if st.session_state.get("fundamental_ticker") == ticker:
+                    fundamentals = st.session_state.get("fundamental_data", {})
+                    fundamental_rows = []
+                    for label, value in fundamentals.items():
+                        if value is None:
+                            display = "Unavailable"
+                        elif label in {
+                            "EPS growth", "Revenue growth", "Profit margin",
+                            "Dividend yield", "Return on equity", "Return on assets",
+                        }:
+                            display = f"{value * 100:.2f}%" if isinstance(value, (int, float)) else "Unavailable"
+                        elif label == "Market capitalization" or label == "Revenue (TTM)":
+                            display = f"${value:,.0f}" if isinstance(value, (int, float)) else "Unavailable"
+                        elif label in {"Trailing P/E", "Forward P/E", "EPS (TTM)", "Analyst target (mean)", "52-week high", "52-week low", "Debt / equity"}:
+                            display = f"{value:,.2f}" if isinstance(value, (int, float)) else "Unavailable"
+                        else:
+                            display = str(value)
+                        fundamental_rows.append({"Metric": label, "Value": display})
+                    if fundamental_rows:
+                        st.dataframe(pd.DataFrame(fundamental_rows), hide_index=True, use_container_width=True)
+                        st.caption(
+                            "Source: Yahoo Finance company profile • retrieved "
+                            f"{st.session_state.get('fundamental_loaded_at', 'time unavailable')}. "
+                            "Unavailable means the provider did not supply the metric."
+                        )
+                else:
+                    st.caption("Company metrics load on request; some may be unavailable from the provider.")
+            with radar_col:
+                st.subheader("Galaxy Radar")
+                if st.button("ADD TO GALAXY RADAR", key="add_analyzed_asset"):
+                    add_to_watchlist(ticker)
+                    st.session_state.radar = get_watchlist()
+                    st.success(f"{ticker} saved to the persistent radar watchlist.")
+
+            st.caption(
+                f"Price history source: Yahoo Finance • last daily data point "
+                f"{data.index[-1].date()}. Historical measurements are not predictions."
+            )
 
 # -----------------------------------------
 # MARKET SCREENER
@@ -1535,89 +2120,249 @@ elif page == "Market Screener":
     st.markdown('<p class="nova-eyebrow">NOVA // MARKET SCAN</p>', unsafe_allow_html=True)
     st.title("Market Screener")
     st.caption(
-        "Compare momentum, trend strength, liquidity, volatility, drawdown, "
-        "and benchmark sensitivity across a custom ticker universe."
+        "Combine live company fundamentals with historical price, liquidity, "
+        "momentum, and risk filters across a custom ticker universe."
     )
+
+    try:
+        saved_screens = json.loads(get_app_setting("saved_screens", "{}"))
+        if not isinstance(saved_screens, dict):
+            raise ValueError("Saved screener configurations must be an object.")
+    except (json.JSONDecodeError, TypeError, ValueError) as error:
+        saved_screens = {}
+        st.error(f"Saved screener configurations could not be loaded: {error}")
+
+    config_notice = st.session_state.pop("screen_config_notice", "")
+    if config_notice:
+        st.success(config_notice)
+
+    saved_names = sorted(
+        name for name, config in saved_screens.items()
+        if isinstance(name, str) and isinstance(config, dict)
+    )
+    config_col, load_col, delete_col = st.columns([3, 1, 1])
+    selected_config = config_col.selectbox(
+        "Saved screening configurations",
+        ["Select a saved configuration", *saved_names],
+        key="saved_screen_choice",
+    )
+    if load_col.button(
+        "LOAD",
+        key="load_screen_config",
+        disabled=selected_config == "Select a saved configuration",
+    ):
+        for key in SCREENER_CONFIG_KEYS:
+            if key in saved_screens[selected_config]:
+                st.session_state[key] = saved_screens[selected_config][key]
+        st.rerun()
+    if delete_col.button(
+        "DELETE",
+        key="delete_screen_config",
+        disabled=selected_config == "Select a saved configuration",
+    ):
+        del saved_screens[selected_config]
+        set_app_setting("saved_screens", json.dumps(saved_screens))
+        st.session_state.screen_config_notice = (
+            f"Deleted saved configuration: {selected_config}."
+        )
+        st.rerun()
+
+    for key, default in SCREENER_CONFIG_DEFAULTS.items():
+        st.session_state.setdefault(key, default)
 
     universe = st.text_input(
         "Ticker universe",
-        value="NVDA, AAPL, MSFT, AMZN, GOOGL, META, TSLA, AMD, ORCL, PLTR",
+        key="screener_universe",
         help="Enter comma-separated stock or ETF tickers. Screening is limited to this list."
     )
 
     with st.expander("Screening criteria", expanded=True):
         first, second, third = st.columns(3)
         min_price = first.number_input(
-            "Minimum price ($)", min_value=0.0, value=0.0, step=5.0
+            "Minimum price ($)", min_value=0.0, step=5.0,
+            key="screener_min_price",
         )
         min_avg_volume = second.number_input(
             "Minimum average daily volume",
             min_value=0,
-            value=0,
-            step=100_000
+            step=100_000,
+            key="screener_min_avg_volume",
         )
         min_dollar_volume = third.number_input(
             "Minimum average dollar volume ($)",
             min_value=0,
-            value=0,
-            step=1_000_000
+            step=1_000_000,
+            key="screener_min_dollar_volume",
         )
         fourth, fifth, sixth = st.columns(3)
         rsi_min, rsi_max = fourth.slider(
             "RSI (14) range",
             min_value=0,
             max_value=100,
-            value=(0, 100)
+            key="screener_rsi_range",
         )
         min_one_month_return = fifth.number_input(
             "Minimum 1-month return (%)",
-            value=-100.0,
-            step=5.0
+            step=5.0,
+            key="screener_min_one_month_return",
         )
         min_three_month_return = sixth.number_input(
             "Minimum 3-month return (%)",
-            value=-100.0,
-            step=5.0
+            step=5.0,
+            key="screener_min_three_month_return",
         )
         seventh, eighth, ninth = st.columns(3)
         max_volatility = seventh.number_input(
             "Maximum annualized volatility (%)",
             min_value=0.0,
-            value=200.0,
-            step=10.0
+            step=10.0,
+            key="screener_max_volatility",
         )
         min_relative_volume = eighth.number_input(
             "Minimum relative volume",
             min_value=0.0,
-            value=0.0,
-            step=0.1
+            step=0.1,
+            key="screener_min_relative_volume",
         )
         max_atr = ninth.number_input(
             "Maximum ATR (14) / price (%)",
             min_value=0.0,
-            value=100.0,
-            step=1.0
+            step=1.0,
+            key="screener_max_atr",
         )
         tenth, eleventh, twelfth, thirteenth = st.columns(4)
-        require_sma20 = tenth.checkbox("Price above 20-day average")
-        require_sma50 = eleventh.checkbox("Price above 50-day average")
-        require_sma200 = twelfth.checkbox("Price above 200-day average")
-        require_macd = thirteenth.checkbox("MACD bullish")
-        limit_beta = st.checkbox("Limit beta versus SPY")
+        require_sma20 = tenth.checkbox(
+            "Price above 20-day average", key="screener_require_sma20"
+        )
+        require_sma50 = eleventh.checkbox(
+            "Price above 50-day average", key="screener_require_sma50"
+        )
+        require_sma200 = twelfth.checkbox(
+            "Price above 200-day average", key="screener_require_sma200"
+        )
+        require_macd = thirteenth.checkbox(
+            "MACD bullish", key="screener_require_macd"
+        )
+        limit_beta = st.checkbox(
+            "Limit beta versus SPY", key="screener_limit_beta"
+        )
         if limit_beta:
             beta_min, beta_max = st.slider(
                 "Beta range",
                 min_value=-2.0,
                 max_value=4.0,
-                value=(0.0, 2.0),
-                step=0.1
+                step=0.1,
+                key="screener_beta_range",
             )
+        else:
+            beta_min, beta_max = (0.0, 2.0)
         sort_by = st.selectbox(
             "Rank results by",
             ["3M (%)", "1M (%)", "1Y (%)", "RSI (14)", "Rel. Volume",
-             "Avg $ Volume (20D)", "Beta vs SPY", "Max Drawdown (%)"]
+             "Avg $ Volume (20D)", "Beta vs SPY", "Max Drawdown (%)",
+             "Market Cap ($B)", "P/E", "Revenue growth (%)"],
+            key="screener_sort_by",
         )
-        ascending = st.checkbox("Sort low to high")
+        ascending = st.checkbox(
+            "Sort low to high", key="screener_ascending"
+        )
+        st.markdown("#### Fundamental & additional filters")
+        st.caption(
+            "Yahoo Finance company-profile data is optional and may be unavailable. "
+            "An active filter excludes assets where its value is missing."
+        )
+        filter_options = [
+            "— Off —",
+            "Market cap ($B)",
+            "Share price ($)",
+            "Trailing P/E",
+            "Forward P/E",
+            "EPS growth (%)",
+            "Revenue growth (%)",
+            "Dividend yield (%)",
+            "Debt / equity (%)",
+            "Profit margin (%)",
+            "Return on equity (%)",
+            "Return on assets (%)",
+            "Relative strength / RSI (14)",
+            "Average trading volume (20D)",
+        ]
+        field_columns = {
+            "Market cap ($B)": "Market Cap ($B)",
+            "Share price ($)": "Price ($)",
+            "Trailing P/E": "P/E",
+            "Forward P/E": "Forward P/E",
+            "EPS growth (%)": "EPS growth (%)",
+            "Revenue growth (%)": "Revenue growth (%)",
+            "Dividend yield (%)": "Dividend yield (%)",
+            "Debt / equity (%)": "Debt / equity (%)",
+            "Profit margin (%)": "Profit margin (%)",
+            "Return on equity (%)": "Return on equity (%)",
+            "Return on assets (%)": "Return on assets (%)",
+            "Relative strength / RSI (14)": "RSI (14)",
+            "Average trading volume (20D)": "Avg Volume (20D)",
+        }
+        filter_criteria = []
+        for filter_index in range(SCREENER_FILTER_COUNT):
+            fields = st.columns([2.2, 1.1, 1, 1])
+            field = fields[0].selectbox(
+                f"Metric {filter_index + 1}",
+                filter_options,
+                key=f"screener_filter_{filter_index}_field",
+            )
+            operator = fields[1].selectbox(
+                "Condition",
+                ["≥", "≤", "Between"],
+                key=f"screener_filter_{filter_index}_operator",
+            )
+            lower = fields[2].number_input(
+                "Threshold",
+                key=f"screener_filter_{filter_index}_lower",
+            )
+            upper = fields[3].number_input(
+                "Upper bound",
+                key=f"screener_filter_{filter_index}_upper",
+            )
+            if field != "— Off —":
+                filter_criteria.append({
+                    "field": field_columns[field],
+                    "operator": operator,
+                    "lower": lower,
+                    "upper": upper,
+                })
+        sector_filter_col, industry_filter_col = st.columns(2)
+        sector_contains = sector_filter_col.text_input(
+            "Sector contains",
+            key="screener_sector",
+            placeholder="Optional",
+        )
+        industry_contains = industry_filter_col.text_input(
+            "Industry contains",
+            key="screener_industry",
+            placeholder="Optional",
+        )
+
+    save_name_col, save_config_col = st.columns([3, 1])
+    save_name = save_name_col.text_input(
+        "Save current screening configuration as",
+        key="screener_save_name",
+        placeholder="e.g. Large-cap growth",
+    )
+    if save_config_col.button("SAVE CONFIGURATION", key="save_screen_config"):
+        clean_name = save_name.strip()
+        if not clean_name:
+            st.error("Enter a name for this screening configuration.")
+        else:
+            saved_screens[clean_name[:100]] = {
+                key: st.session_state.get(key)
+                for key in SCREENER_CONFIG_KEYS
+                if key in st.session_state
+            }
+            set_app_setting("saved_screens", json.dumps(saved_screens))
+            st.session_state.screen_config_notice = (
+                f"Saved screening configuration: {clean_name[:100]}."
+            )
+            st.rerun()
 
     if st.button("RUN MARKET SCAN", use_container_width=True):
         tickers = list(dict.fromkeys(
@@ -1631,18 +2376,25 @@ elif page == "Market Screener":
         else:
             screen_rows = []
             unavailable = []
-            benchmark_data = get_stock_data("SPY", "1y")
+            try:
+                benchmark_data = get_stock_data("SPY", "1y")
+            except Exception as error:
+                benchmark_data = pd.DataFrame()
+                st.warning(f"SPY benchmark data is unavailable: {error}")
             benchmark_returns = (
                 benchmark_data["Returns"] if not benchmark_data.empty else None
             )
             progress = st.progress(0, text="Scanning ticker universe...")
 
             for index, ticker in enumerate(tickers):
-                result = screen_ticker(ticker, benchmark_returns)
-                if result is None:
-                    unavailable.append(ticker)
-                else:
-                    screen_rows.append(result)
+                try:
+                    result = screen_ticker(ticker, benchmark_returns)
+                    if result is None:
+                        unavailable.append(f"{ticker} (no usable history)")
+                    else:
+                        screen_rows.append(result)
+                except Exception as error:
+                    unavailable.append(f"{ticker} ({error})")
                 progress.progress(
                     (index + 1) / len(tickers),
                     text=f"Scanning {ticker} ({index + 1}/{len(tickers)})"
@@ -1663,6 +2415,16 @@ elif page == "Market Screener":
                     & (results["Rel. Volume"] >= min_relative_volume)
                     & (results["ATR (14) (%)"] <= max_atr)
                 ]
+                try:
+                    filtered = apply_screener_filters(
+                        filtered,
+                        filter_criteria,
+                        sector_contains,
+                        industry_contains,
+                    )
+                except ValueError as error:
+                    st.error(f"Additional screener filters could not be applied: {error}")
+                    filtered = results.iloc[0:0]
                 if limit_beta:
                     filtered = filtered[
                         filtered["Beta vs SPY"].between(beta_min, beta_max)
@@ -1686,6 +2448,16 @@ elif page == "Market Screener":
                     hide_index=True,
                     column_config={
                         "Price ($)": st.column_config.NumberColumn(format="$%.2f"),
+                        "Market Cap ($B)": st.column_config.NumberColumn(format="$%.2fB"),
+                        "P/E": st.column_config.NumberColumn(format="%.2f"),
+                        "Forward P/E": st.column_config.NumberColumn(format="%.2f"),
+                        "EPS growth (%)": st.column_config.NumberColumn(format="%.2f%%"),
+                        "Revenue growth (%)": st.column_config.NumberColumn(format="%.2f%%"),
+                        "Dividend yield (%)": st.column_config.NumberColumn(format="%.2f%%"),
+                        "Debt / equity (%)": st.column_config.NumberColumn(format="%.2f"),
+                        "Profit margin (%)": st.column_config.NumberColumn(format="%.2f%%"),
+                        "Return on equity (%)": st.column_config.NumberColumn(format="%.2f%%"),
+                        "Return on assets (%)": st.column_config.NumberColumn(format="%.2f%%"),
                         "Day (%)": st.column_config.NumberColumn(format="%.2f%%"),
                         "1M (%)": st.column_config.NumberColumn(format="%.2f%%"),
                         "3M (%)": st.column_config.NumberColumn(format="%.2f%%"),
@@ -1705,6 +2477,11 @@ elif page == "Market Screener":
                         "Price vs SMA50 (%)": st.column_config.NumberColumn(format="%.2f%%"),
                         "Price vs SMA200 (%)": st.column_config.NumberColumn(format="%.2f%%")
                     }
+                )
+                st.caption(
+                    "Price history and company profile: Yahoo Finance. Price date and "
+                    "profile lookup time are shown per row; company-profile responses "
+                    "may be cached for up to 15 minutes. Missing metrics are unavailable."
                 )
                 if filtered.empty:
                     st.info("No assets match all selected criteria.")
@@ -1734,42 +2511,84 @@ elif page == "Galaxy Radar":
     )
 
     if st.button("DISCOVER AND ADD"):
-        match = discover_stock(new_ticker)
-
-        if match:
-            ticker = match["symbol"]
-            if ticker not in st.session_state.radar:
-                st.session_state.radar.append(ticker)
-            st.success(
-                f"{match.get('longname') or match.get('shortname')} "
-                f"({ticker}) added."
-            )
-        else:
-            st.error("No matching stock found.")
+        try:
+            match = discover_stock(new_ticker)
+            if match:
+                ticker = match["symbol"]
+                add_to_watchlist(ticker)
+                st.session_state.radar = get_watchlist()
+                st.success(
+                    f"{match.get('longname') or match.get('shortname')} "
+                    f"({ticker}) saved to the radar."
+                )
+            else:
+                st.error("No matching stock found.")
+        except Exception as error:
+            st.error(f"Asset search failed: {error}")
 
     if st.session_state.radar:
-
         radar_rows = []
-
+        radar_points = []
+        radar_errors = []
         for ticker in st.session_state.radar:
-            data = get_stock_data(ticker, "1y")
-
-            if not data.empty:
+            try:
+                data = get_stock_data(ticker, "1y")
+                if data.empty:
+                    radar_errors.append(f"{ticker}: no current price history")
+                    continue
                 metrics = calculate_metrics(data)
                 radar_rows.append({
                     "Ticker": ticker,
                     "Latest Price": metrics["Latest Price"],
+                    "Day Change (%)": metrics["Daily Change"],
                     "1Y Return (%)": metrics["Total Return"],
                     "Volatility (%)": metrics["Volatility"],
-                    "Sharpe": metrics["Sharpe"]
+                    "Sharpe": metrics["Sharpe"],
+                    "Last Updated": str(data.index[-1]),
                 })
+                daily_angle = np.radians((metrics["Daily Change"] + 10) * 18)
+                distance = 18 + min(abs(metrics["Total Return"]), 80) / 100 * 28
+                radar_points.append(
+                    f'<span class="nova-radar-point" title="{escape(ticker)} / '
+                    f'day {metrics["Daily Change"]:+.2f}% / '
+                    f'1Y {metrics["Total Return"]:+.2f}%" '
+                    f'style="left:{50 + distance * np.sin(daily_angle):.1f}%;'
+                    f'top:{50 - distance * np.cos(daily_angle):.1f}%">'
+                    f'{escape(ticker)}</span>'
+                )
+            except Exception as error:
+                radar_errors.append(f"{ticker}: {error}")
 
         if radar_rows:
+            st.markdown(
+                '<div class="nova-radar-display">'
+                '<div class="nova-radar-crosshair"></div>'
+                + "".join(radar_points)
+                + '</div>',
+                unsafe_allow_html=True,
+            )
+            st.caption(
+                "Live radar sweep • marker direction follows the latest daily move; "
+                "distance reflects the magnitude of the 1-year return. This is a "
+                "visualization of historical prices, not a trading signal."
+            )
             st.dataframe(
                 pd.DataFrame(radar_rows),
                 use_container_width=True,
                 hide_index=True
             )
+        if radar_errors:
+            st.warning("Some radar assets are unavailable: " + "; ".join(radar_errors))
+        st.caption("Source: Yahoo Finance • each row includes its latest available history date.")
+        remove_choice = st.selectbox(
+            "Remove an asset from radar",
+            st.session_state.radar,
+            key="radar_remove_choice",
+        )
+        if st.button("REMOVE FROM RADAR"):
+            remove_from_watchlist(remove_choice)
+            st.session_state.radar = get_watchlist()
+            st.rerun()
     else:
         st.info("Your galaxy radar is waiting for its first asset.")
 
@@ -1792,24 +2611,58 @@ elif page == "Portfolio Analytics":
             "brokerage and does not import positions or transactions."
         )
         st.subheader("Edit Holdings")
-        ticker_input = st.text_input("Ticker symbol")
+        holdings_now = load_persisted_holdings()
+        edit_choice = st.selectbox(
+            "Select a holding or add a new one",
+            ["Add new holding", *sorted(holdings_now)],
+            key="portfolio_edit_choice",
+        )
+        current_holding = holdings_now.get(edit_choice, {})
+        ticker_input = st.text_input(
+            "Ticker symbol",
+            value="" if edit_choice == "Add new holding" else edit_choice,
+            key=f"portfolio_ticker_{edit_choice}",
+            disabled=edit_choice != "Add new holding",
+        )
         shares_input = st.number_input(
             "Number of shares",
             min_value=0.0,
-            value=0.0,
+            value=float(current_holding.get("shares", 0.0)),
             step=0.01,
-            format="%.4f"
+            format="%.4f",
+            key=f"portfolio_shares_{edit_choice}",
         )
-
-        if st.button("UPDATE HOLDING"):
-            ticker = ticker_input.strip().upper()
-
-            if not ticker:
-                st.warning("Enter a ticker symbol to update a holding.")
-            elif shares_input == 0:
-                st.session_state.portfolio.pop(ticker, None)
-            else:
-                st.session_state.portfolio[ticker] = float(shares_input)
+        cost_input = st.text_input(
+            "Average purchase price per share (optional, USD)",
+            value=(
+                f'{current_holding["cost_basis"]:.4f}'
+                if current_holding.get("cost_basis") is not None else ""
+            ),
+            key=f"portfolio_cost_{edit_choice}",
+            help="Leave blank until you know the cost basis. Nova will not estimate it.",
+        )
+        save_col, remove_col = st.columns(2)
+        if save_col.button("SAVE HOLDING", type="primary", use_container_width=True):
+            try:
+                ticker = normalize_ticker(ticker_input)
+                cost_basis = float(cost_input) if cost_input.strip() else None
+                save_holding(ticker, shares_input, cost_basis)
+                st.session_state.portfolio_edit_choice = ticker
+                st.session_state.pop("sector_exposure", None)
+                st.success(f"{ticker} saved to persistent portfolio storage.")
+                st.rerun()
+            except ValueError as error:
+                st.error(str(error))
+        if remove_col.button(
+            "REMOVE SELECTED",
+            use_container_width=True,
+            disabled=edit_choice == "Add new holding",
+        ):
+            remove_holding(edit_choice)
+            st.session_state.portfolio_edit_choice = "Add new holding"
+            st.session_state.pop("sector_exposure", None)
+            st.success(f"{edit_choice} removed from the portfolio.")
+            st.rerun()
 
         price_history = {}
         data_errors = {}
@@ -1868,7 +2721,38 @@ elif page == "Portfolio Analytics":
             except ValueError as error:
                 st.warning(f"Portfolio analytics could not be calculated: {error}")
             else:
-                frame = analytics.holdings
+                frame = analytics.holdings.copy()
+                frame["Average Cost / Share"] = frame["Ticker"].map(
+                    lambda symbol: (
+                        f'${persisted_holdings[symbol]["cost_basis"]:,.2f}'
+                        if persisted_holdings.get(symbol, {}).get("cost_basis") is not None
+                        else "NOT ENTERED"
+                    )
+                )
+                frame["Total Cost Basis"] = frame.apply(
+                    lambda row: (
+                        f'${row["Shares"] * persisted_holdings[row["Ticker"]]["cost_basis"]:,.2f}'
+                        if persisted_holdings.get(row["Ticker"], {}).get("cost_basis") is not None
+                        else "NOT ENTERED"
+                    ),
+                    axis=1,
+                )
+                frame["Unrealized Gain/Loss"] = frame.apply(
+                    lambda row: (
+                        f'${row["Market Value"] - row["Shares"] * persisted_holdings[row["Ticker"]]["cost_basis"]:+,.2f}'
+                        if persisted_holdings.get(row["Ticker"], {}).get("cost_basis") is not None
+                        else "NOT ENTERED"
+                    ),
+                    axis=1,
+                )
+                frame["Unrealized Return (%)"] = frame.apply(
+                    lambda row: (
+                        f'{(row["Market Value"] / (row["Shares"] * persisted_holdings[row["Ticker"]]["cost_basis"]) - 1) * 100:+.2f}%'
+                        if persisted_holdings.get(row["Ticker"], {}).get("cost_basis") is not None
+                        else "NOT ENTERED"
+                    ),
+                    axis=1,
+                )
                 a, b, c, d = st.columns(4)
                 a.metric(
                     (
@@ -1926,8 +2810,23 @@ elif page == "Portfolio Analytics":
                     "for 60 seconds)."
                 )
 
+                search_holdings = st.text_input(
+                    "Search holdings", key="portfolio_search"
+                ).strip().upper()
+                sort_holdings = st.selectbox(
+                    "Sort holdings by",
+                    ["Market Value", "Ticker", "Day Change (%)", "Weight (%)"],
+                    key="portfolio_sort",
+                )
+                visible_frame = frame[
+                    frame["Ticker"].str.contains(search_holdings, regex=False)
+                ] if search_holdings else frame
                 st.dataframe(
-                    frame.sort_values("Market Value", ascending=False),
+                    visible_frame.sort_values(
+                        sort_holdings,
+                        ascending=(sort_holdings == "Ticker"),
+                        na_position="last",
+                    ),
                     use_container_width=True,
                     hide_index=True,
                     column_config={
@@ -1938,9 +2837,27 @@ elif page == "Portfolio Analytics":
                             format="%.2f%%"
                         ),
                         "Market Value": st.column_config.NumberColumn(format="$%.2f"),
-                        "Weight (%)": st.column_config.NumberColumn(format="%.2f%%")
+                        "Weight (%)": st.column_config.NumberColumn(format="%.2f%%"),
                     }
                 )
+                basis_complete = not data_errors and all(
+                    persisted_holdings.get(symbol, {}).get("cost_basis") is not None
+                    for symbol in analytics.holdings["Ticker"]
+                )
+                if basis_complete:
+                    total_basis = sum(
+                        persisted_holdings[row["Ticker"]]["cost_basis"] * row["Shares"]
+                        for _, row in analytics.holdings.iterrows()
+                    )
+                    st.metric(
+                        "Unrealized Gain/Loss",
+                        f"${analytics.total_value - total_basis:+,.2f}",
+                    )
+                else:
+                    st.caption(
+                        "Overall unrealized gain/loss is withheld until a purchase "
+                        "price is entered for every held asset."
+                    )
 
                 colors = [
                     "#62a8ff", "#a886ff", "#4079d8", "#cf8cff",
@@ -1967,6 +2884,53 @@ elif page == "Portfolio Analytics":
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
+                if st.button("LOAD SECTOR EXPOSURE", key="load_sector_exposure"):
+                    sector_values = {}
+                    sector_unavailable = []
+                    values_by_ticker = frame.set_index("Ticker")["Market Value"]
+                    with st.spinner("LOADING COMPANY SECTOR DATA..."):
+                        for symbol in frame["Ticker"]:
+                            fundamentals = get_company_fundamentals(symbol)
+                            sector = fundamentals.get("Sector")
+                            if not sector:
+                                sector_unavailable.append(symbol)
+                                continue
+                            sector_values[sector] = (
+                                sector_values.get(sector, 0.0)
+                                + float(values_by_ticker[symbol])
+                            )
+                    st.session_state.sector_exposure = {
+                        "values": sector_values,
+                        "unavailable": sector_unavailable,
+                    }
+                exposure = st.session_state.get("sector_exposure")
+                if exposure:
+                    if exposure["values"]:
+                        sector_frame = pd.DataFrame([
+                            {
+                                "Sector": sector,
+                                "Market Value": value,
+                                "Weight (%)": value / analytics.total_value * 100,
+                            }
+                            for sector, value in exposure["values"].items()
+                        ]).sort_values("Market Value", ascending=False)
+                        st.dataframe(
+                            sector_frame,
+                            hide_index=True,
+                            use_container_width=True,
+                            column_config={
+                                "Market Value": st.column_config.NumberColumn(format="$%.2f"),
+                                "Weight (%)": st.column_config.NumberColumn(format="%.2f%%"),
+                            },
+                        )
+                    else:
+                        st.info("The provider did not return sector data for these holdings.")
+                    if exposure["unavailable"]:
+                        st.caption(
+                            "Sector unavailable for: "
+                            + ", ".join(exposure["unavailable"])
+                        )
+
                 if len(frame) > 1:
                     st.subheader("Holdings Correlation")
                     st.dataframe(
@@ -1974,10 +2938,7 @@ elif page == "Portfolio Analytics":
                         use_container_width=True
                     )
         elif not data_errors:
-            st.info(
-                "Add your actual ticker symbols and share counts to calculate "
-                "portfolio value and today's gain or loss."
-            )
+            st.info("Price information is not available for the configured holdings yet.")
 
         st.caption(
             "One-year estimates apply the entered share counts to adjusted history; "
@@ -2014,6 +2975,29 @@ elif page == "Backtesting Lab":
             step=1_000.0,
             key="backtest_capital"
         )
+        strategy = st.selectbox(
+            "Strategy",
+            ["SMA crossover", "EMA crossover"],
+            key="backtest_strategy",
+        )
+        compare_strategies = st.checkbox(
+            "Compare SMA and EMA",
+            value=True,
+            key="backtest_compare_strategies",
+        )
+        default_end = datetime.now().date()
+        default_start = (pd.Timestamp(default_end) - pd.DateOffset(years=5)).date()
+        date_columns = st.columns(2)
+        start_date = date_columns[0].date_input(
+            "Start date",
+            value=default_start,
+            key="backtest_start_date",
+        )
+        end_date = date_columns[1].date_input(
+            "End date",
+            value=default_end,
+            key="backtest_end_date",
+        )
         cost_bps = st.number_input(
             "Estimated cost per position change (basis points)",
             min_value=0.0,
@@ -2032,33 +3016,58 @@ elif page == "Backtesting Lab":
             st.error("Enter a ticker symbol to backtest.")
         elif fast >= slow:
             st.error("Fast average must be shorter than the slow average.")
+        elif start_date >= end_date:
+            st.error("Start date must be earlier than end date.")
         else:
             try:
                 with st.spinner(f"LOADING {ticker} HISTORICAL DATA..."):
                     history = get_stock_data(ticker, period)
+                history = history.loc[
+                    (history.index.date >= start_date)
+                    & (history.index.date <= end_date)
+                ]
                 if history.empty or len(history) < slow:
                     st.error(
-                        f"Not enough historical data to calculate a {slow}-day "
-                        f"average for {ticker}."
+                        f"Not enough historical data in the selected date range "
+                        f"to calculate a {slow}-day average for {ticker}."
                     )
                 else:
                     engine = VeyroBacktester(
                         initial_capital=capital,
                         transaction_cost=cost_bps / 10_000
                     )
+                    primary_method = "EMA" if strategy.startswith("EMA") else "SMA"
                     results = engine.moving_average_strategy(
-                        history, fast=int(fast), slow=int(slow)
+                        history,
+                        fast=int(fast),
+                        slow=int(slow),
+                        method=primary_method,
                     )
                     metrics = engine.calculate_metrics(results)
+                    comparison = {}
+                    if compare_strategies:
+                        for method in ("SMA", "EMA"):
+                            comparison_results = engine.moving_average_strategy(
+                                history,
+                                fast=int(fast),
+                                slow=int(slow),
+                                method=method,
+                            )
+                            comparison[method] = {
+                                "results": comparison_results,
+                                "metrics": engine.calculate_metrics(comparison_results),
+                            }
                     st.session_state.backtest_result = {
                         "ticker": ticker,
                         "period": period,
                         "fast": int(fast),
                         "slow": int(slow),
+                        "method": primary_method,
                         "results": results,
-                        "metrics": metrics
+                        "metrics": metrics,
+                        "comparison": comparison,
                     }
-            except (OSError, TimeoutError, ValueError, KeyError) as error:
+            except Exception as error:
                 st.error(f"Backtest could not run: {error}")
 
     backtest_result = st.session_state.get("backtest_result")
@@ -2066,7 +3075,7 @@ elif page == "Backtesting Lab":
         metrics = backtest_result["metrics"]
         st.markdown(
             f'<div class="nova-hud-strip">RESULTS / {escape(backtest_result["ticker"])}'
-            f' / SMA {backtest_result["fast"]}:{backtest_result["slow"]}'
+            f' / {backtest_result["method"]} {backtest_result["fast"]}:{backtest_result["slow"]}'
             f' / {escape(backtest_result["period"])}</div>',
             unsafe_allow_html=True
         )
@@ -2095,6 +3104,15 @@ elif page == "Backtesting Lab":
             name="Buy & Hold",
             line=dict(color="#f4bb55", width=1.5)
         ))
+        for method, result_set in backtest_result["comparison"].items():
+            if method == backtest_result["method"]:
+                continue
+            equity_chart.add_trace(go.Scatter(
+                x=result_set["results"].index,
+                y=result_set["results"]["Strategy_Equity"],
+                name=f"{method} crossover",
+                line=dict(color="#a886ff", width=1.5),
+            ))
         equity_chart.update_layout(
             title="SIMULATED EQUITY / STRATEGY VS BUY & HOLD",
             template="plotly_dark",
@@ -2108,10 +3126,34 @@ elif page == "Backtesting Lab":
             yaxis=dict(title="ACCOUNT VALUE (USD)", tickprefix="$", gridcolor="rgba(8,245,239,.09)")
         )
         st.plotly_chart(equity_chart, use_container_width=True)
+        drawdown = results["Strategy_Equity"] / results["Strategy_Equity"].cummax() - 1
+        drawdown_chart = go.Figure(go.Scatter(
+            x=drawdown.index,
+            y=drawdown * 100,
+            name="Strategy drawdown",
+            fill="tozeroy",
+            line=dict(color="#ff6489", width=1.5),
+        ))
+        drawdown_chart.update_layout(
+            title="SIMULATED DRAWDOWN",
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="#04121a",
+            height=280,
+            yaxis=dict(title="DRAWDOWN (%)", ticksuffix="%", gridcolor="rgba(8,245,239,.09)"),
+            xaxis=dict(title="SESSION DATE", gridcolor="rgba(8,245,239,.09)"),
+        )
+        st.plotly_chart(drawdown_chart, use_container_width=True)
+        if backtest_result["comparison"]:
+            comparison_rows = [
+                {"Strategy": method, **result_set["metrics"]}
+                for method, result_set in backtest_result["comparison"].items()
+            ]
+            st.dataframe(pd.DataFrame(comparison_rows), hide_index=True, use_container_width=True)
         st.warning(
             "Educational historical simulation only. Signals execute on the "
-            "following session to reduce look-ahead bias. Results omit slippage, "
-            "taxes, and real-world execution constraints. No orders are placed."
+            "following session to reduce look-ahead bias. Transaction costs are "
+            "estimated, dividends and slippage are not modeled, and no orders are placed."
         )
     else:
         st.info("Set the test parameters, then run a backtest to compare the rule with buy-and-hold.")
@@ -2123,12 +3165,11 @@ elif page == "Backtesting Lab":
 elif page == "Study Studio":
 
     st.markdown('<p class="nova-eyebrow">NOVA // LEARNING SYSTEM</p>', unsafe_allow_html=True)
-    st.title("Study Studio")
+    st.title("Study / Document Creator")
     st.markdown(
         '<div class="nova-school-note"><strong>YOUR TUTOR, NOT A SUBSTITUTE.</strong> '
-        'Use NOVA to understand concepts, plan assignments, practice, and get feedback. '
-        'You stay in control of your work; it will coach you instead of writing a '
-        'complete graded submission.</div>',
+        'Use NOVA to understand concepts, plan assignments, practice, draft useful '
+        'documents, and get feedback. Review and edit every generated result.</div>',
         unsafe_allow_html=True
     )
     api_key, model = get_study_ai_settings()
@@ -2140,13 +3181,39 @@ elif page == "Study Studio":
             "App settings → Secrets. Never put the key in GitHub."
         )
     st.caption(
-        "Submitting a question sends it to the configured OpenAI API and may "
-        "incur provider usage charges. Avoid entering private or sensitive information."
+        "Prompts and attached materials are sent to the configured OpenAI API only "
+        "when submitted. Provider usage may incur charges; do not upload sensitive information."
     )
 
     for message in st.session_state.study_messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
+
+    saved_documents = get_saved_documents()
+    if saved_documents:
+        saved_labels = {
+            f'{item["title"]} / {item["subject"]} / {item["created_at"]}': item
+            for item in saved_documents
+        }
+        saved_col, load_col = st.columns([4, 1])
+        selected_saved = saved_col.selectbox(
+            "Saved study work",
+            list(saved_labels),
+            key="saved_document_choice",
+        )
+        if load_col.button("LOAD", key="load_saved_document"):
+            selected = saved_labels[selected_saved]
+            st.session_state.document_title = selected["title"]
+            st.session_state.document_subject = selected["subject"]
+            st.session_state.document_editor = selected["content"]
+            st.rerun()
+
+    if "document_title" not in st.session_state:
+        st.session_state.document_title = "NOVA Study Notes"
+    if "document_subject" not in st.session_state:
+        st.session_state.document_subject = "General"
+    if "document_editor" not in st.session_state:
+        st.session_state.document_editor = ""
 
     with st.form("study_question_form", clear_on_submit=False):
         subject_col, mode_col = st.columns(2)
@@ -2157,7 +3224,21 @@ elif page == "Study Studio":
         )
         help_mode = mode_col.selectbox(
             "How should NOVA help?",
-            ["Explain a concept", "Guide me step by step", "Quiz me", "Review my draft", "Help me plan"],
+            [
+                "Explain a concept",
+                "Guide me step by step",
+                "Quiz me",
+                "Review my draft",
+                "Help me plan",
+                "Generate a study guide",
+                "Summarize notes",
+                "Create practice questions",
+                "Create an essay or research outline",
+                "Create a report or business plan",
+                "Create a presentation outline",
+                "Create organized class notes",
+                "Create flashcards",
+            ],
             key="study_help_mode"
         )
         st.text_area(
@@ -2166,13 +3247,18 @@ elif page == "Study Studio":
             height=140,
             placeholder="Ask a question or describe what you are working on..."
         )
-        ask_tutor = st.form_submit_button("ASK THE TUTOR", type="primary")
+        study_upload = st.file_uploader(
+            "Attach notes, an assignment, or an image",
+            type=["txt", "md", "csv", "docx", "pdf", "png", "jpg", "jpeg", "webp"],
+            help="Text is extracted from TXT, Markdown, CSV, DOCX and PDF. Images are sent to vision-capable models.",
+        )
+        ask_tutor = st.form_submit_button("ASK / GENERATE", type="primary")
 
     if ask_tutor:
         prompt = st.session_state.study_prompt.strip()
         api_key, model = get_study_ai_settings()
-        if not prompt:
-            st.warning("Enter a question or topic first.")
+        if not prompt and not study_upload:
+            st.warning("Enter a question or attach supported study material.")
         elif not api_key:
             st.error(
                 "The study assistant is not connected yet. Add OPENAI_API_KEY "
@@ -2180,62 +3266,180 @@ elif page == "Study Studio":
                 "be committed to GitHub."
             )
         else:
-            history = [
-                {"role": item["role"], "content": item["content"]}
-                for item in st.session_state.study_messages[-10:]
-            ]
-            pending_messages = history + [{"role": "user", "content": prompt}]
             try:
+                extracted_text, image_data_uri = ("", None)
+                upload_context = ""
+                if study_upload:
+                    extracted_text, image_data_uri = read_study_upload(
+                        study_upload.name, study_upload.getvalue()
+                    )
+                    if extracted_text.strip():
+                        upload_context = (
+                            f"\n\n[Uploaded file: {study_upload.name}]\n"
+                            f"{extracted_text}"
+                        )
+                    elif image_data_uri:
+                        prompt = prompt or "Explain the attached assignment and suggest how to approach it."
+                full_prompt = prompt + upload_context
+                history = [
+                    {"role": item["role"], "content": item["content"]}
+                    for item in st.session_state.study_messages[-10:]
+                ]
+                pending_messages = history + [{"role": "user", "content": full_prompt}]
                 with st.spinner("NOVA IS THINKING..."):
                     answer = request_study_tutor(
-                        pending_messages, subject, help_mode, model, api_key
+                        pending_messages,
+                        subject,
+                        help_mode,
+                        model,
+                        api_key,
+                        image_data_uri=image_data_uri,
                     )
                 st.session_state.study_messages = pending_messages + [
                     {"role": "assistant", "content": answer}
                 ]
                 st.session_state.last_study_response = answer
+                st.session_state.document_title = (
+                    f"{subject} {help_mode}".strip()[:100]
+                )
+                st.session_state.document_subject = subject
+                st.session_state.document_editor = answer
                 st.rerun()
             except HTTPError as error:
                 st.error(
                     f"The OpenAI API returned HTTP {error.code}. Check the "
                     "configured key, model, and provider account."
                 )
-            except (URLError, TimeoutError, ValueError, KeyError) as error:
+            except (URLError, TimeoutError, ValueError, KeyError, OSError) as error:
                 st.error(f"Study assistant request failed: {error}")
 
+    st.divider()
+    st.subheader("Document workspace")
+    st.text_input("Document title", key="document_title")
+    st.text_area(
+        "Edit before saving or exporting",
+        key="document_editor",
+        height=360,
+        placeholder="Generated or handwritten content appears here. You can edit it before export.",
+    )
+    save_col, format_col = st.columns([1, 2])
+    if save_col.button("SAVE STUDY WORK", type="primary"):
+        try:
+            save_document(
+                st.session_state.document_title,
+                st.session_state.document_subject,
+                st.session_state.document_editor,
+            )
+            st.success("Study work saved in Nova's private local database.")
+        except ValueError as error:
+            st.error(str(error))
+    with format_col:
+        st.caption("Downloads use your edited text, not an earlier AI response.")
+    export_columns = st.columns(4)
+    for column, file_type in zip(export_columns, EXPORTS):
+        try:
+            payload, filename, mime_type = export_document(
+                st.session_state.document_title,
+                st.session_state.document_editor,
+                file_type,
+            )
+            column.download_button(
+                f"DOWNLOAD {file_type.upper()}",
+                data=payload,
+                file_name=filename,
+                mime=mime_type,
+                disabled=not st.session_state.document_editor.strip(),
+                key=f"download_{file_type.lower().replace(' ', '_')}",
+                use_container_width=True,
+            )
+        except (ImportError, ValueError) as error:
+            column.error(f"{file_type} export unavailable: {error}")
 # -----------------------------------------
 # SYSTEM INFORMATION
 # -----------------------------------------
 
 elif page == "System Information":
 
-    st.title("System Information")
+    st.markdown('<p class="nova-eyebrow">NOVA // CONFIGURATION & HEALTH</p>', unsafe_allow_html=True)
+    st.title("System Settings")
+    status_left, status_right = st.columns(2)
+    status_left.metric(
+        "Study AI",
+        "CONNECTED" if get_study_ai_settings()[0] else "NOT CONFIGURED",
+    )
+    status_right.metric(
+        "App access password",
+        "CONFIGURED" if access_password else "NOT CONFIGURED",
+    )
+    if not access_password:
+        st.warning(
+            "This deployment has no NOVA_ACCESS_PASSWORD gate. Restrict access "
+            "at the hosting platform before storing private portfolio or study data."
+        )
 
-    st.markdown("""
-    ### NOVA — MARKET INTELLIGENCE
+    st.subheader("Weather Location")
+    weather_location_input = st.text_input(
+        "City, region, or country",
+        value=st.session_state.weather_location,
+        key="settings_weather_location",
+    )
+    if st.button("SAVE WEATHER LOCATION", key="save_weather_location"):
+        if not weather_location_input.strip():
+            st.error("Enter a location.")
+        else:
+            set_app_setting("weather_location", weather_location_input.strip())
+            st.session_state.weather_location = weather_location_input.strip()
+            st.session_state.pop("weather_data", None)
+            st.session_state.pop("weather_loaded_location", None)
+            st.success("Weather location saved. Live conditions load on the command center.")
 
-    **Current modules**
-    - Market data retrieval
-    - Company and ticker discovery
-    - Stock price, trend, momentum and risk analytics
-    - Custom-universe market screening
-    - Portfolio valuation, performance and correlation
-    - Galaxy research radar
-    - Moving-average historical backtesting with transaction-cost estimates
-    - Voice navigation and a configurable tutoring assistant
+    st.subheader("Interface")
+    reduce_motion_default = get_app_setting("reduce_motion", "0") == "1"
+    reduce_motion = st.toggle(
+        "Reduce nonessential animations",
+        value=reduce_motion_default,
+        key="settings_reduce_motion",
+    )
+    if st.button("SAVE INTERFACE PREFERENCES", key="save_interface_preferences"):
+        set_app_setting("reduce_motion", "1" if reduce_motion else "0")
+        st.success("Interface preference saved.")
+        st.rerun()
+    if reduce_motion:
+        st.markdown(
+            "<style>*,*::before,*::after{animation-duration:.01ms!important;"
+            "animation-iteration-count:1!important;transition-duration:.01ms!important}</style>",
+            unsafe_allow_html=True,
+        )
 
-    **Planned modules**
-    - Research report generation
-    - Persistent database
-    - User authentication
-    - More backtest strategies and walk-forward analysis
+    st.subheader("Provider & Storage Status")
+    st.write(
+        "- **Market data:** Yahoo Finance via yfinance; no API key configured; "
+        "quotes may be delayed or unavailable.\n"
+        "- **Weather:** Open-Meteo geocoding and forecast APIs; no API key required.\n"
+        f"- **Study AI:** {escape(get_study_ai_settings()[1])}; "
+        f"{'server-side key configured' if get_study_ai_settings()[0] else 'OPENAI_API_KEY required'}.\n"
+        "- **Voice:** browser speech recognition; requires supported browser and microphone permission.\n"
+        f"- **Private local database:** `{escape(os.environ.get('NOVA_DATA_PATH', '~/.nova/nova.sqlite3'))}` "
+        "(contains portfolio, watchlist, settings, and saved study documents)."
+    )
+    st.caption(
+        f"Persistent holdings: {len(load_persisted_holdings())} • "
+        f"Radar assets: {len(get_watchlist())} • "
+        f"Saved study documents: {len(get_saved_documents())}"
+    )
+    if st.button("REFRESH MARKET / WEATHER CACHES", key="clear_provider_caches"):
+        get_market_indices.clear()
+        get_stock_data.clear()
+        get_chart_data.clear()
+        get_portfolio_data.clear()
+        get_portfolio_intraday_data.clear()
+        get_weather_for_location.clear()
+        st.success("Cached provider responses cleared.")
 
-    **System limitations**
-    - Market data may be delayed.
-    - Research outputs are historical simulations, not predictions.
-    - No brokerage connection or trade execution.
-    - Screening is limited to the user-provided ticker universe.
-    - Study Studio requires an OpenAI API key configured in deployment
-      secrets; prompts are sent to that provider only when submitted.
-    """)
+    st.subheader("Study Session")
+    if st.button("CLEAR THIS SESSION'S STUDY CONVERSATION", key="clear_study_history"):
+        st.session_state.study_messages = []
+        st.session_state.pop("last_study_response", None)
+        st.success("This browser session's conversation was cleared.")
+        st.rerun()
 

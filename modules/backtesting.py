@@ -12,10 +12,12 @@ class VeyroBacktester:
         self.initial_capital = initial_capital
         self.transaction_cost = transaction_cost
 
-    def moving_average_strategy(self, data, fast=20, slow=50):
+    def moving_average_strategy(self, data, fast=20, slow=50, method="SMA"):
 
         if fast < 1 or slow <= fast:
             raise ValueError("Moving-average windows must satisfy 1 <= fast < slow.")
+        if method.upper() not in {"SMA", "EMA"}:
+            raise ValueError("Moving-average method must be SMA or EMA.")
         if "Close" not in data or data["Close"].dropna().empty:
             raise ValueError("Historical data must contain closing prices.")
 
@@ -25,8 +27,16 @@ class VeyroBacktester:
         if df.empty:
             raise ValueError("Historical data contains no usable closing prices.")
 
-        df["Fast_MA"] = df["Close"].rolling(fast).mean()
-        df["Slow_MA"] = df["Close"].rolling(slow).mean()
+        if method.upper() == "EMA":
+            df["Fast_MA"] = df["Close"].ewm(
+                span=fast, adjust=False, min_periods=fast
+            ).mean()
+            df["Slow_MA"] = df["Close"].ewm(
+                span=slow, adjust=False, min_periods=slow
+            ).mean()
+        else:
+            df["Fast_MA"] = df["Close"].rolling(fast).mean()
+            df["Slow_MA"] = df["Close"].rolling(slow).mean()
 
         df["Signal"] = np.where(
             df["Fast_MA"] > df["Slow_MA"], 1, 0
