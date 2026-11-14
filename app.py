@@ -58,18 +58,6 @@ try:
 except (FileNotFoundError, AttributeError):
     pass
 
-if not access_password:
-    st.error(
-        "NOVA is locked until a private access password is configured. "
-        "Set NOVA_ACCESS_PASSWORD in the server environment or Streamlit secrets."
-    )
-    st.code(
-        "export NOVA_ACCESS_PASSWORD='your-private-password'\n"
-        "streamlit run app.py",
-        language="bash",
-    )
-    st.stop()
-
 if access_password:
     if not st.session_state.get("nova_authenticated"):
         st.title("NOVA / SECURE ACCESS")
@@ -87,6 +75,12 @@ try:
 except (OSError, ValueError) as error:
     st.error(f"Nova's private local storage could not be opened: {error}")
     st.stop()
+
+if not access_password:
+    st.warning(
+        "PUBLIC MODE: no NOVA_ACCESS_PASSWORD is configured. Anyone who can "
+        "access this app may view portfolio positions and saved study documents."
+    )
 
 voice_component = components.declare_component(
     "nova_voice",

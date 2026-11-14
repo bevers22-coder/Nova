@@ -22,9 +22,10 @@ The private portfolio is preloaded with NVDA (1), ORCL (5), PLTR (1), MRVL (2),
 FTNT (1), ABBV (1), MP (1), and PG (12). No purchase prices or cost basis are
 assumed. Holdings, optional per-share cost basis, watchlist, saved screener
 configurations, settings, and saved study documents persist in a local SQLite
-database with owner-only file permissions. The app requires a
-`NOVA_ACCESS_PASSWORD`; configure a private password before starting Nova and
-do not expose the app publicly without that gate. Today's P&L uses the latest
+database with owner-only file permissions. Without `NOVA_ACCESS_PASSWORD`,
+the app runs in public mode and shows a warning: anyone who can reach the app
+may view this data. Configure a password to restrict access before deploying
+privately. Today's P&L uses the latest
 available intraday quote when available and shows both dollar and percentage
 changes; provider quotes may be delayed. Historical estimates use
 dividend-adjusted prices and apply current share counts to past prices, so they
@@ -55,15 +56,18 @@ The HUD artwork is drawn with CSS; no external background image is required.
 
 ```bash
 pip install -r requirements.txt
-export NOVA_ACCESS_PASSWORD='your-private-password'
 streamlit run app.py
 ```
+
+For a password-protected deployment, set `NOVA_ACCESS_PASSWORD` in the server
+environment (or Streamlit secrets). Without it, Nova opens in public mode.
 
 ## Deploy with Streamlit Community Cloud
 
 Connect this GitHub repository in Streamlit Community Cloud and set the
 deployment entry point to `app.py`. Add `NOVA_ACCESS_PASSWORD` under **App
-settings → Secrets** before opening the app. Streamlit installs the packages
-listed in `requirements.txt` during deployment. The voice component is included
-in `voice_component/` and microphone access requires a supported browser and
-permission from the user.
+settings → Secrets** to require a password; otherwise, the app is publicly
+accessible and displays a data-visibility warning. Streamlit installs the
+packages listed in `requirements.txt` during deployment. The voice component
+is included in `voice_component/` and microphone access requires a supported
+browser and permission from the user.
