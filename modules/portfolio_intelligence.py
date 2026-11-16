@@ -1,9 +1,10 @@
 
 
 
-import yfinance as yf
 import pandas as pd
 import numpy as np
+
+from modules.market_engine import market_engine
 
 
 class VeyroPortfolioIntelligence:
@@ -18,7 +19,7 @@ class VeyroPortfolioIntelligence:
 
         tickers = list(self.holdings.keys()) + ["SPY"]
 
-        data = yf.download(
+        data = market_engine.download(
             tickers,
             period=period,
             interval="1d",

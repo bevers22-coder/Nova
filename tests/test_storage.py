@@ -8,12 +8,14 @@ from unittest.mock import patch
 from modules.storage import (
     add_to_watchlist,
     get_holdings,
+    get_backtest_runs,
     get_saved_documents,
     get_watchlist,
     initialize_storage,
     remove_from_watchlist,
     remove_holding,
     save_document,
+    save_backtest_run,
     save_holding,
 )
 
@@ -72,6 +74,29 @@ class StorageTests(unittest.TestCase):
             0o755,
         )
         self.assertEqual(stat.S_IMODE(configured_path.stat().st_mode), 0o600)
+
+    def test_backtest_runs_persist_source_parameters_and_metrics(self):
+        run_id = save_backtest_run(
+            "aapl",
+            "Yahoo Finance",
+            "2025-01-01",
+            "2025-12-31",
+            {"strategy": "SMA", "commission_bps": 5},
+            {"return_pct": 12.5, "profit_factor": float("nan")},
+            "2",
+        )
+
+        saved = get_backtest_runs(limit=1)[0]
+
+        self.assertEqual(saved["id"], run_id)
+        self.assertEqual(saved["ticker"], "AAPL")
+        self.assertEqual(saved["provider"], "Yahoo Finance")
+        self.assertEqual(saved["parameters"]["strategy"], "SMA")
+        self.assertEqual(saved["metrics"]["return_pct"], 12.5)
+        self.assertIsNone(saved["metrics"]["profit_factor"])
+        self.assertEqual(saved["engine_version"], "2")
+        with self.assertRaises(ValueError):
+            get_backtest_runs(limit=0)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,5 @@
+import json
+import math
 import os
 import re
 import sqlite3
@@ -81,6 +83,19 @@ def initialize_storage() -> None:
             """CREATE TABLE IF NOT EXISTS app_metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS backtest_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                ticker TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                data_start TEXT NOT NULL,
+                data_end TEXT NOT NULL,
+                parameters_json TEXT NOT NULL,
+                metrics_json TEXT NOT NULL,
+                engine_version TEXT NOT NULL
             )"""
         )
         seeded = connection.execute(
@@ -189,6 +204,81 @@ def get_saved_documents() -> list[dict[str, Any]]:
                FROM saved_documents ORDER BY id DESC"""
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if hasattr(value, "item"):
+        return _json_safe(value.item())
+    return value
+
+
+def save_backtest_run(
+    ticker: str,
+    provider: str,
+    data_start: str,
+    data_end: str,
+    parameters: dict[str, Any],
+    metrics: dict[str, Any],
+    engine_version: str,
+) -> int:
+    symbol = normalize_ticker(ticker)
+    if not provider.strip() or not engine_version.strip():
+        raise ValueError("A provider and backtest engine version are required.")
+    if not data_start.strip() or not data_end.strip() or data_start > data_end:
+        raise ValueError("A valid backtest data range is required.")
+    parameter_json = json.dumps(
+        _json_safe(parameters), sort_keys=True, allow_nan=False
+    )
+    metrics_json = json.dumps(_json_safe(metrics), sort_keys=True, allow_nan=False)
+    with _database() as connection:
+        cursor = connection.execute(
+            """INSERT INTO backtest_runs (
+                ticker, provider, data_start, data_end,
+                parameters_json, metrics_json, engine_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                symbol,
+                provider.strip(),
+                data_start,
+                data_end,
+                parameter_json,
+                metrics_json,
+                engine_version.strip(),
+            ),
+        )
+        return int(cursor.lastrowid)
+
+
+def get_backtest_runs(limit: int = 20) -> list[dict[str, Any]]:
+    if not 1 <= limit <= 100:
+        raise ValueError("Backtest history limit must be between 1 and 100.")
+    with _database() as connection:
+        rows = connection.execute(
+            """SELECT id, created_at, ticker, provider, data_start, data_end,
+                      parameters_json, metrics_json, engine_version
+               FROM backtest_runs ORDER BY id DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    return [
+        {
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "ticker": row["ticker"],
+            "provider": row["provider"],
+            "data_start": row["data_start"],
+            "data_end": row["data_end"],
+            "parameters": json.loads(row["parameters_json"]),
+            "metrics": json.loads(row["metrics_json"]),
+            "engine_version": row["engine_version"],
+        }
+        for row in rows
+    ]
 
 
 def get_app_setting(key: str, default: str = "") -> str:

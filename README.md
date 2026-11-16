@@ -18,6 +18,14 @@ The backtesting lab compares a configurable long/cash moving-average rule with
 buy-and-hold using historical data and estimated transaction costs; it does not
 place trades.
 
+Market downloads go through one shared provider engine: Yahoo Finance is the
+primary provider, with Stooq as a limited free fallback for single-symbol,
+unadjusted daily history. The fallback is intentionally not used for
+dividend-adjusted returns, intraday quotes, index symbols, or multi-symbol
+requests. Provider timing varies; prices and analysis are historical unless a
+panel explicitly reports otherwise. Failed provider requests are retried and
+shown as unavailable when no supported source can provide the requested data.
+
 The private portfolio is preloaded with NVDA (1), ORCL (5), PLTR (1), MRVL (2),
 FTNT (1), ABBV (1), MP (1), and PG (12). No purchase prices or cost basis are
 assumed. Holdings, optional per-share cost basis, watchlist, saved screener
@@ -58,6 +66,17 @@ The HUD artwork is drawn with CSS; no external background image is required.
 pip install -r requirements.txt
 streamlit run app.py
 ```
+
+Run the automated tests with:
+
+```bash
+python -m unittest discover -v
+```
+
+See [docs/STATUS.md](docs/STATUS.md) for verified project status,
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for provider and data limitations,
+and [docs/ASSIGNMENTS.md](docs/ASSIGNMENTS.md) for implementation acceptance
+criteria.
 
 For a password-protected deployment, set `NOVA_ACCESS_PASSWORD` in the server
 environment (or Streamlit secrets). Without it, Nova opens in public mode.

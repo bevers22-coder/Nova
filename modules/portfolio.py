@@ -1,10 +1,14 @@
+import logging
 from dataclasses import dataclass
 from typing import Mapping
 
 import numpy as np
-import yfinance as yf
 import pandas as pd
 
+from modules.market_engine import market_engine
+
+
+_LOGGER = logging.getLogger(__name__)
 
 @dataclass
 class PortfolioAnalytics:
@@ -264,11 +268,15 @@ class VeyroPortfolio:
         for ticker in self.holdings:
 
             try:
-                history = yf.Ticker(ticker).history(
-                    period="5d"
+                history = market_engine.download(
+                    ticker,
+                    period="5d",
+                    interval="1d",
+                    auto_adjust=True,
+                    progress=False,
                 )
 
-                if history.empty:
+                if history.empty or "Close" not in history:
                     continue
 
                 self.prices[ticker] = float(
@@ -276,7 +284,7 @@ class VeyroPortfolio:
                 )
 
             except Exception as error:
-                print(f"{ticker} data error: {error}")
+                _LOGGER.warning("%s market data is unavailable: %s", ticker, error)
 
         return self.prices
 

@@ -2,6 +2,7 @@
 import json
 import hmac
 import os
+import sqlite3
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from html import escape
@@ -16,15 +17,16 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
-import yfinance as yf
 
-from modules.backtesting import VeyroBacktester
+from modules.backtesting import BACKTEST_ENGINE_VERSION, VeyroBacktester
 from modules.document_tools import EXPORTS, export_document
+from modules.market_engine import MarketDataUnavailable, market_engine
 from modules.portfolio import calculate_portfolio_analytics
 from modules.screener import apply_screener_filters
 from modules.storage import (
     add_to_watchlist,
     get_app_setting,
+    get_backtest_runs,
     get_holdings as load_persisted_holdings,
     get_saved_documents,
     get_watchlist,
@@ -33,6 +35,7 @@ from modules.storage import (
     remove_from_watchlist,
     remove_holding,
     save_document,
+    save_backtest_run,
     save_holding,
     set_app_setting,
 )
@@ -691,7 +694,7 @@ if get_app_setting("reduce_motion", "0") == "1":
 
 @st.cache_data(ttl=300)
 def get_stock_data(ticker, period="5y"):
-    data = yf.download(
+    data = market_engine.download(
         ticker,
         period=period,
         auto_adjust=True,
@@ -738,7 +741,7 @@ def get_market_indices():
         "Dow Jones": "^DJI",
         "Russell 2000": "^RUT",
     }
-    data = yf.download(
+    data = market_engine.download(
         list(symbols.values()),
         period="5d",
         interval="1d",
@@ -780,6 +783,9 @@ def get_market_indices():
                 if previous is not None and previous else None
             ),
             "as_of": pd.Timestamp(prices.index[-1]),
+            "source": data.attrs.get("source", "Unknown provider"),
+            "fetched_at": data.attrs.get("fetched_at"),
+            "timing": data.attrs.get("timing", "HISTORICAL"),
         }
     return snapshot
 
@@ -810,7 +816,7 @@ def get_chart_data(ticker, period):
         "5y": ("5y", "1d"),
     }
     data_period, interval = range_settings[period]
-    data = yf.download(
+    data = market_engine.download(
         ticker,
         period=data_period,
         interval=interval,
@@ -844,10 +850,7 @@ def get_chart_data(ticker, period):
 
 @st.cache_data(ttl=900, show_spinner=False)
 def get_company_fundamentals(ticker):
-    try:
-        info = yf.Ticker(ticker).get_info()
-    except Exception:
-        return {}
+    info = market_engine.company_info(ticker)
     if not isinstance(info, dict):
         return {}
     return {
@@ -936,7 +939,7 @@ for _filter_index in range(SCREENER_FILTER_COUNT):
 
 @st.cache_data(ttl=300)
 def get_portfolio_data(ticker, period="2y"):
-    data = yf.download(
+    data = market_engine.download(
         ticker,
         period=period,
         auto_adjust=False,
@@ -964,7 +967,7 @@ def get_portfolio_intraday_data(tickers):
     if not tickers:
         return pd.DataFrame()
 
-    data = yf.download(
+    data = market_engine.download(
         list(tickers),
         period="5d",
         interval="1m",
@@ -994,7 +997,7 @@ def get_portfolio_intraday_data(tickers):
 
 def discover_stock(query):
     try:
-        results = yf.Search(query, max_results=8).quotes or []
+        results = market_engine.search(query, max_results=8)
         equities = [
             x for x in results
             if x.get("quoteType") in ["EQUITY", "ETF"]
@@ -1011,8 +1014,8 @@ def discover_stock(query):
 
         return exact[0] if exact else equities[0]
 
-    except Exception as error:
-        raise RuntimeError(f"Yahoo Finance asset search failed: {error}") from error
+    except MarketDataUnavailable as error:
+        raise RuntimeError(f"Market data asset search failed: {error}") from error
 
 
 def calculate_metrics(data):
@@ -1772,7 +1775,7 @@ if page == "Command Center":
         market_snapshot = get_market_indices()
     except Exception as error:
         market_snapshot = {}
-        st.warning(f"Yahoo Finance index data is unavailable: {error}")
+        st.warning(f"Market index data is unavailable: {error}")
     if market_snapshot:
         index_columns = st.columns(4)
         for column, (label, quote) in zip(index_columns, market_snapshot.items()):
@@ -1788,8 +1791,9 @@ if page == "Command Center":
             quote["as_of"] for quote in market_snapshot.values()
         )
         st.caption(
-            f"Yahoo Finance • last daily index data: {latest_index_time} • "
-            "values may be delayed and are not an intraday feed."
+            f'{next(iter(market_snapshot.values()))["source"]} • '
+            f"last daily index data: {latest_index_time} • "
+            "HISTORICAL / values may be delayed and are not an intraday feed."
         )
     else:
         st.info("Market index data has not been returned by the provider.")
@@ -1934,7 +1938,7 @@ if page == "Command Center":
                 "Change (%)": st.column_config.NumberColumn(format="%.2f%%"),
             },
         )
-        st.caption("Movers are limited to your saved holdings and radar assets; data source is Yahoo Finance.")
+        st.caption("Movers are limited to your saved holdings and radar assets; values use available historical market data.")
     st.divider()
     st.subheader("Live Intelligence Feeds")
     if st.button(
@@ -2011,7 +2015,7 @@ elif page == "Stock Intelligence":
             st.error(f"Market data request failed: {error}")
 
         if data.empty:
-            st.error("No usable historical price data was returned by Yahoo Finance.")
+            st.error("No usable historical price data was returned by the configured providers.")
         else:
             metrics = calculate_metrics(data)
             st.success(f"{analysis['name']} ({ticker})")
@@ -2049,11 +2053,13 @@ elif page == "Stock Intelligence":
                 if "Volume" in chart_data:
                     st.plotly_chart(volume_chart(chart_data, ticker), use_container_width=True)
                 st.caption(
-                    f"Chart period: {period} • Yahoo Finance • latest point "
+                    f'Chart period: {period} • '
+                    f'{chart_data.attrs.get("source", "Unknown provider")} • '
+                    f'{chart_data.attrs.get("timing", "HISTORICAL")} • latest point '
                     f"{chart_data.index[-1]} (provider timestamps may be delayed)."
                 )
             else:
-                st.info(f"Yahoo Finance did not return chart data for the selected {period} period.")
+                st.info(f"No chart data was returned for the selected {period} period.")
 
             fundamental_col, radar_col = st.columns([1.3, 1])
             with fundamental_col:
@@ -2063,7 +2069,7 @@ elif page == "Stock Intelligence":
                         st.session_state.fundamental_data = get_company_fundamentals(ticker)
                         st.session_state.fundamental_ticker = ticker
                         st.session_state.fundamental_loaded_at = datetime.now().astimezone().isoformat(timespec="seconds")
-                    except Exception as error:
+                    except MarketDataUnavailable as error:
                         st.session_state.fundamental_data = {}
                         st.warning(f"Fundamentals are unavailable: {error}")
                 if st.session_state.get("fundamental_ticker") == ticker:
@@ -2101,7 +2107,8 @@ elif page == "Stock Intelligence":
                     st.success(f"{ticker} saved to the persistent radar watchlist.")
 
             st.caption(
-                f"Price history source: Yahoo Finance • last daily data point "
+                f'Price history source: {data.attrs.get("source", "Unknown provider")} • '
+                f'{data.attrs.get("timing", "HISTORICAL")} • last daily data point '
                 f"{data.index[-1].date()}. Historical measurements are not predictions."
             )
 
@@ -2114,7 +2121,7 @@ elif page == "Market Screener":
     st.markdown('<p class="nova-eyebrow">NOVA // MARKET SCAN</p>', unsafe_allow_html=True)
     st.title("Market Screener")
     st.caption(
-        "Combine live company fundamentals with historical price, liquidity, "
+        "Combine company fundamentals with historical price, liquidity, "
         "momentum, and risk filters across a custom ticker universe."
     )
 
@@ -2473,9 +2480,10 @@ elif page == "Market Screener":
                     }
                 )
                 st.caption(
-                    "Price history and company profile: Yahoo Finance. Price date and "
-                    "profile lookup time are shown per row; company-profile responses "
-                    "may be cached for up to 15 minutes. Missing metrics are unavailable."
+                    "Price history uses configured market data providers; company "
+                    "profiles use Yahoo Finance. Price date and profile lookup time "
+                    "are shown per row; profiles may be cached for up to 15 minutes. "
+                    "Missing metrics are unavailable."
                 )
                 if filtered.empty:
                     st.info("No assets match all selected criteria.")
@@ -2573,7 +2581,7 @@ elif page == "Galaxy Radar":
             )
         if radar_errors:
             st.warning("Some radar assets are unavailable: " + "; ".join(radar_errors))
-        st.caption("Source: Yahoo Finance • each row includes its latest available history date.")
+        st.caption("Source and latest available history date are shown per row; values are historical, not real-time.")
         remove_choice = st.selectbox(
             "Remove an asset from radar",
             st.session_state.radar,
@@ -2680,6 +2688,20 @@ elif page == "Portfolio Analytics":
             )
 
         if price_history:
+            price_sources = sorted({
+                str(history.attrs.get("source", "Unknown provider"))
+                for history in price_history.values()
+            })
+            price_dates = [
+                pd.Timestamp(history.index[-1])
+                for history in price_history.values()
+                if not history.empty
+            ]
+            if price_dates:
+                st.caption(
+                    f'Source: {", ".join(price_sources)} • HISTORICAL • '
+                    f"latest daily price date: {max(price_dates).date()}."
+                )
             intraday_errors = []
             try:
                 intraday_data = get_portfolio_intraday_data(
@@ -2882,9 +2904,15 @@ elif page == "Portfolio Analytics":
                     sector_values = {}
                     sector_unavailable = []
                     values_by_ticker = frame.set_index("Ticker")["Market Value"]
+                    sector_errors = []
                     with st.spinner("LOADING COMPANY SECTOR DATA..."):
                         for symbol in frame["Ticker"]:
-                            fundamentals = get_company_fundamentals(symbol)
+                            try:
+                                fundamentals = get_company_fundamentals(symbol)
+                            except MarketDataUnavailable as error:
+                                sector_unavailable.append(symbol)
+                                sector_errors.append(f"{symbol}: {error}")
+                                continue
                             sector = fundamentals.get("Sector")
                             if not sector:
                                 sector_unavailable.append(symbol)
@@ -2923,6 +2951,11 @@ elif page == "Portfolio Analytics":
                         st.caption(
                             "Sector unavailable for: "
                             + ", ".join(exposure["unavailable"])
+                        )
+                    if sector_errors:
+                        st.warning(
+                            "Some provider requests failed: "
+                            + "; ".join(sector_errors)
                         )
 
                 if len(frame) > 1:
@@ -2993,12 +3026,20 @@ elif page == "Backtesting Lab":
             key="backtest_end_date",
         )
         cost_bps = st.number_input(
-            "Estimated cost per position change (basis points)",
+            "Estimated commission per position change (basis points)",
             min_value=0.0,
             max_value=500.0,
             value=10.0,
             step=1.0,
             key="backtest_cost_bps"
+        )
+        slippage_bps = st.number_input(
+            "Estimated slippage per position change (basis points)",
+            min_value=0.0,
+            max_value=500.0,
+            value=0.0,
+            step=1.0,
+            key="backtest_slippage_bps",
         )
         run_backtest = st.button(
             "RUN BACKTEST", type="primary", key="run_backtest"
@@ -3028,7 +3069,8 @@ elif page == "Backtesting Lab":
                 else:
                     engine = VeyroBacktester(
                         initial_capital=capital,
-                        transaction_cost=cost_bps / 10_000
+                        transaction_cost=cost_bps / 10_000,
+                        slippage_cost=slippage_bps / 10_000,
                     )
                     primary_method = "EMA" if strategy.startswith("EMA") else "SMA"
                     results = engine.moving_average_strategy(
@@ -3051,6 +3093,35 @@ elif page == "Backtesting Lab":
                                 "results": comparison_results,
                                 "metrics": engine.calculate_metrics(comparison_results),
                             }
+                    parameters = {
+                        "period": period,
+                        "start_date": start_date.isoformat(),
+                        "end_date": end_date.isoformat(),
+                        "fast": int(fast),
+                        "slow": int(slow),
+                        "method": primary_method,
+                        "initial_capital": float(capital),
+                        "commission_bps": float(cost_bps),
+                        "slippage_bps": float(slippage_bps),
+                    }
+                    try:
+                        run_id = save_backtest_run(
+                            ticker=ticker,
+                            provider=str(
+                                history.attrs.get("source", "Unknown provider")
+                            ),
+                            data_start=pd.Timestamp(history.index[0]).date().isoformat(),
+                            data_end=pd.Timestamp(history.index[-1]).date().isoformat(),
+                            parameters=parameters,
+                            metrics=metrics,
+                            engine_version=BACKTEST_ENGINE_VERSION,
+                        )
+                    except (OSError, sqlite3.Error, ValueError, TypeError) as error:
+                        run_id = None
+                        st.warning(
+                            "Backtest finished, but its reproducibility record "
+                            f"could not be saved: {error}"
+                        )
                     st.session_state.backtest_result = {
                         "ticker": ticker,
                         "period": period,
@@ -3060,6 +3131,11 @@ elif page == "Backtesting Lab":
                         "results": results,
                         "metrics": metrics,
                         "comparison": comparison,
+                        "provider": history.attrs.get("source", "Unknown provider"),
+                        "data_start": pd.Timestamp(history.index[0]).date(),
+                        "data_end": pd.Timestamp(history.index[-1]).date(),
+                        "run_id": run_id,
+                        "parameters": parameters,
                     }
             except Exception as error:
                 st.error(f"Backtest could not run: {error}")
@@ -3082,9 +3158,30 @@ elif page == "Backtesting Lab":
         more_metrics[0].metric("Annualized Return", f'{metrics["Annualized Return (%)"]:.2f}%')
         more_metrics[1].metric("Sharpe Ratio", f'{metrics["Sharpe Ratio"]:.2f}')
         more_metrics[2].metric("Annualized Volatility", f'{metrics["Annualized Volatility (%)"]:.2f}%')
-        more_metrics[3].metric("Position Changes", metrics["Position Changes"])
+        more_metrics[3].metric("Sortino Ratio", f'{metrics["Sortino Ratio"]:.2f}')
+        risk_metrics = st.columns(4)
+        risk_metrics[0].metric(
+            "Max Drawdown Duration",
+            f'{metrics["Maximum Drawdown Duration (sessions)"]} sessions',
+        )
+        risk_metrics[1].metric(
+            "Profit Factor",
+            (
+                f'{metrics["Profit Factor"]:.2f}'
+                if np.isfinite(metrics["Profit Factor"]) else "N/A"
+            ),
+        )
+        risk_metrics[2].metric("Exposure", f'{metrics["Exposure (%)"]:.1f}%')
+        risk_metrics[3].metric("Position Changes", metrics["Position Changes"])
 
         results = backtest_result["results"]
+        st.caption(
+            f'Provider: {backtest_result["provider"]} • HISTORICAL • '
+            f'Data dates: {backtest_result["data_start"]} to '
+            f'{backtest_result["data_end"]} • '
+            f'Run record: {backtest_result["run_id"] or "not saved"} • '
+            f'Engine version: {BACKTEST_ENGINE_VERSION}.'
+        )
         equity_chart = go.Figure()
         equity_chart.add_trace(go.Scatter(
             x=results.index,
@@ -3138,6 +3235,37 @@ elif page == "Backtesting Lab":
             xaxis=dict(title="SESSION DATE", gridcolor="rgba(8,245,239,.09)"),
         )
         st.plotly_chart(drawdown_chart, use_container_width=True)
+        trade_log = results.loc[results["Turnover"] > 0].copy()
+        st.subheader("Position Change Log")
+        st.dataframe(
+            trade_log[
+                [
+                    "Signal",
+                    "Position",
+                    "Turnover",
+                    "Open",
+                    "Close",
+                    "Strategy_Return",
+                ]
+                if "Open" in trade_log
+                else [
+                    "Signal",
+                    "Position",
+                    "Turnover",
+                    "Close",
+                    "Strategy_Return",
+                ]
+            ],
+            hide_index=False,
+            use_container_width=True,
+        )
+        st.download_button(
+            "DOWNLOAD BACKTEST CSV",
+            data=results.to_csv(index_label="Date").encode("utf-8"),
+            file_name=f'nova-backtest-{backtest_result["ticker"].lower()}.csv',
+            mime="text/csv",
+            key="download_backtest_csv",
+        )
         if backtest_result["comparison"]:
             comparison_rows = [
                 {"Strategy": method, **result_set["metrics"]}
@@ -3145,10 +3273,36 @@ elif page == "Backtesting Lab":
             ]
             st.dataframe(pd.DataFrame(comparison_rows), hide_index=True, use_container_width=True)
         st.warning(
-            "Educational historical simulation only. Signals execute on the "
-            "following session to reduce look-ahead bias. Transaction costs are "
-            "estimated, dividends and slippage are not modeled, and no orders are placed."
+            "Historical results do not guarantee future performance. This "
+            "historical simulation has survivorship bias, provider-data risks, "
+            "and no point-in-time fundamentals. Close-based signals trade at the "
+            "next session's open when opening prices are available; commission "
+            "and slippage are estimates. No orders are placed."
         )
+        saved_runs = get_backtest_runs(limit=10)
+        if saved_runs:
+            st.subheader("Saved Run History")
+            st.dataframe(
+                pd.DataFrame([
+                    {
+                        "Run": run["id"],
+                        "Saved": run["created_at"],
+                        "Ticker": run["ticker"],
+                        "Provider": run["provider"],
+                        "Data range": f'{run["data_start"]} – {run["data_end"]}',
+                        "Strategy": (
+                            f'{run["parameters"]["method"]} '
+                            f'{run["parameters"]["fast"]}:'
+                            f'{run["parameters"]["slow"]}'
+                        ),
+                        "Return (%)": run["metrics"].get("Total Return (%)"),
+                        "Engine": run["engine_version"],
+                    }
+                    for run in saved_runs
+                ]),
+                hide_index=True,
+                use_container_width=True,
+            )
     else:
         st.info("Set the test parameters, then run a backtest to compare the rule with buy-and-hold.")
 
